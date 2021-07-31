@@ -1,6 +1,20 @@
 #!/usr/bin/env python
 
 import dash_bootstrap_components as dbc
+import saqc.lib.types as saqc_types
+
+TYPE_MAPPING = {
+    str: 'text',
+    int: 'number',
+    float: 'number',
+    bool: 'text',
+    saqc_types.ColumnName: 'text',
+    saqc_types.TimestampColumnName: 'text',
+    saqc_types.FreqString: 'text',
+    saqc_types.IntegerWindow: 'number',
+    saqc_types.PositiveFloat: 'number',
+    saqc_types.PositiveInt: 'number',
+}
 
 
 def text_value_input(text, id, type="text", widths=(2, 10), row=True, raw=False, **kws):
