@@ -8,7 +8,7 @@ import json
 import dash
 import dash_core_components as dcc
 import dash_html_components as html
-from dash.dependencies import Input, Output, State, ALL
+from dash.dependencies import Input, Output, State, ALL, MATCH
 import dash_bootstrap_components as dbc
 import dash_table
 import plotly.express as px
@@ -26,10 +26,13 @@ AGG_METHODS = ['mean', 'min', 'max', 'sum']  # first is default
 
 
 def test(
-        a, b, c, arg, kw1: int = 9, kw2: bool = False, kw3=None,
-        kw4=np.nan, kw5=-np.inf,
-        kw6: float = np.nan, kw7: float = -np.inf
-
+        data, field, flags,
+        arg,
+        kw1: int = 9, kw2: bool = False,
+        kw3: int = None, kw31=None,
+        kw4=np.nan, kw5: float = np.nan,
+        kw6=-np.inf, kw7: float = -np.inf,
+        **kwargs
 ):
     pass
 
@@ -51,7 +54,7 @@ df = df.reset_index(drop=True)
 df.index.name = ''
 df = df.reset_index()
 
-app = dash.Dash(external_stylesheets=[dbc.themes.BOOTSTRAP])
+app = dash.Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP])
 
 input_section = html.Div([
     DivRow(["Data", dcc.Upload(dbc.Button("Upload File"), id='upload-data')]),
@@ -84,7 +87,7 @@ preview_section = html.Div([
         dbc.Select(
             options=[dict(label=f, value=f) for f in SAQC_FUNCS.keys()],
             placeholder="Select a function",
-            id='function-select'
+            id='function-select',
         )
     ]),
 
@@ -95,96 +98,107 @@ preview_section = html.Div([
 
     html.Br(),
 
-    # live preview and submit Button/Checkbox
-    # dbc.FormGroup(
-    #     [
-    #         dbc.Checkbox(id="live-preview-toggle", className="form-check-input"),
-    #         dbc.Label(
-    #             "Live Preview",
-    #             html_for="live-preview-toggle",
-    #             className="form-check-label",
-    #         ),
-    #     ],
-    #     check=True,
-    # ),
     dbc.Button("Submit", id='submit', block=True),
-
+    html.Div([], id='error-container'),
     dbc.Card("Result", body=True, id='show'),
 ])
 
 
-# @app.callback(
-#     Output('submit', 'disabled'),
-#     Input('live-preview-toggle', 'checked')
-# )
-# def cb_live_preview_toggle(checked):
-#     """
-#     Disable/Enable the `Submit` button, depending on the
-#     `Live-Preview` checkbox.
-#     """
-    # return bool(checked)
-    # return False
-
-
 def parse_param(name, value, funcname):
-    func = SAQC_FUNCS[funcname]
-    if func is None:
-        return 'nothing parsed'
-    param = inspect.signature(func).parameters[name]
-    type_ = param.annotation
-    if type_ is inspect._empty:
+    type_ = inspect.signature(SAQC_FUNCS[funcname]).parameters[name].annotation
+
+    # Special
+    if value == 'None':
+        return None
+
+    # Parsing
+    if type_ is bool and value == 'False':
+        return False
+    if type_ is not inspect._empty:  # we have a casting type
+        try:
+            return type_(value)
+        except (ValueError, TypeError):
+            raise ValueError(
+                f"Could not cast '{value}' to needed type '{type_.__name__}'."
+            )
+
+    # Guessing by user submitted value
+    if value in ['True', 'False']:
+        type_ = eval
+    elif value in ['nan', 'inf', '-inf']:
+        type_ = float
+    else:
         type_ = str
+    return type_(value)
 
-    # parse
-    try:
-        v = type_(value)
-    except ValueError:
-        v = value
 
-    return f"{v}({type(v)})"
+@app.callback(
+    Output({'group': 'param', 'id': MATCH}, 'invalid'),
+    Input({'group': 'param', 'id': MATCH}, 'value'),
+)
+def cb_validate_param_input(value):
+    return value is None or value == ''
 
 
 @app.callback(
     Output('show', 'children'),
+    Output('error-container', 'children'),
     Input('submit', 'n_clicks'),
     State({'group': 'param', 'id': ALL}, 'value'),
     State('function-select', 'value'),
-    # State('live-preview-toggle', 'checked'),  # ignored
 )
-def cb_update_graph(submit, params, funcname):
+def cb_update_graph(submit_n, params_unused, funcname):
+    alerts = []
+    if submit_n is None:
+        return ['Nothing happened yet'], alerts
+
     ctx = dash.callback_context
 
-    id = val = None
-    if ctx.triggered:
-        id = ctx.triggered[0]['prop_id'].split('.')[0]
-        val = ctx.triggered[0]['value']
+    out = []
+    kws_to_func = {}
+    submit = True
+    # a state entry for a parameter look like this:
+    # '{"group": "param", "id": name}.value': '255.0'
+    for key, value in ctx.states.items():
+        key = key.split('.')[0]
+        if not key.startswith('{'):
+            continue
+        param_name = json.loads(key)['id']
 
-    if id is None:
-        return ['Nothing happened yet']
+        # process and parse value
+        try:
+            if value is None or value == "":
+                raise ValueError(f"Missing value for parameter '{key}'")
+            parsed = parse_param(param_name, value, funcname)
+        except ValueError as e:
+            alerts.append(dbc.Alert(str(e), color="danger"))
+            submit = False
+            continue
 
-    # if id == 'submit':
-    #     s = parse_param(id, val, funcname)
-    #     return [f'']
+        kws_to_func[param_name] = parsed
 
-    ctx_msg = json.dumps({
-        'states': ctx.states,
-        'triggered': ctx.triggered,
-        'inputs': ctx.inputs
-    }, indent=2)
+    if submit:
+        txt, color = 'Success\n', 'success'
+    else:
+        txt, color = 'Failed\n', 'danger'
+    for k, v in kws_to_func.items():
+        txt += f"'{k}' is '{v}' of type '{type(v).__name__}'\n"
+    out.append(dbc.Alert(html.Pre(txt), color=color))
 
-    return html.Div([f"{id} is now {val}", html.Br(), html.Pre(ctx_msg)])
+    return html.Div(out), alerts
 
 
 @app.callback(
     Output('parameters', 'children'),
+    Output('submit', 'disabled'),
     Input('function-select', 'value'),
 )
-def cb_update_parameters(funcname):
+def cb_fill_parameters(funcname):
     if funcname is None:
         funcname = 'None'
     func = SAQC_FUNCS[funcname]
     if func is None:
-        return dbc.Form(['No parameters to set'])
+        return dbc.Form(['No parameters to set']), True
 
     parameters = inspect.signature(func).parameters
     ignore = ['data', 'flags', 'field', 'kwargs']
@@ -199,22 +213,27 @@ def cb_update_parameters(funcname):
         else:
             default = str(p.default)
 
+        type_ = p.annotation
+        if type_ is inspect._empty:
+            type_ = None
+
         # using a dict as ``id`` makes pattern matching callbacks possible
         id = {"group": "param", "id": name}
-        form = text_value_input(text=name, id=id, type='text', value=default, raw=True)
+        txt = f"{name}" + ("" if type_ is None else f" ({type_.__name__})")
+        form = text_value_input(text=txt, id=id, type='text', value=default, raw=True)
         forms.append(form)
 
-    return dbc.Form(forms)
+    return dbc.Form(forms), False
 
 
 app.layout = dbc.Container(
     [
         html.H1("SaQC Configurator"),
 
-        # dbc.Card([
-        #     dbc.CardHeader('Input section'),
-        #     dbc.CardBody([input_section]),
-        # ]),
+        dbc.Card([
+            dbc.CardHeader('Input section'),
+            dbc.CardBody([input_section]),
+        ]),
 
         html.Br(),
 
