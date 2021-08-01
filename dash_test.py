@@ -4,6 +4,7 @@
 # visit http://127.0.0.1:8050/ in your web browser.
 import inspect
 import json
+import typing
 
 import dash
 import dash_core_components as dcc
@@ -13,7 +14,7 @@ import dash_bootstrap_components as dbc
 import dash_table
 import plotly.express as px
 
-from dash_helper import text_value_input, DivRow
+from dash_helper import text_value_input, DivRow, parse_param, type_repr
 
 import pandas as pd
 import numpy as np
@@ -21,17 +22,27 @@ import base64
 import datetime
 import io
 import saqc.funcs
+from saqc.lib.types import FreqString, PositiveInt
 
 AGG_METHODS = ['mean', 'min', 'max', 'sum']  # first is default
 
 
 def test(
         data, field, flags,
-        arg,
-        kw1: int = 9, kw2: bool = False,
-        kw3: int = None, kw31=None,
-        kw4=np.nan, kw5: float = np.nan,
-        kw6=-np.inf, kw7: float = -np.inf,
+        kw1: int = 9,
+        kw2: bool = False,
+        kw3: int = None,
+        kw31=None,
+        kw4=np.nan,
+        kw6=-np.inf,
+        kw7: PositiveInt = 9,
+        freq: FreqString = '9d',
+        union: typing.Union[int, float] = 0,
+        tup: (int, float) = 0,
+        li: typing.Literal['a', 'b', 'c'] = 'a',
+        op1: int = None,
+        op2: typing.Optional[int] = None,
+        op3: typing.Optional[int] = 7,
         **kwargs
 ):
     pass
@@ -104,32 +115,6 @@ preview_section = html.Div([
 ])
 
 
-def parse_param(name, value, funcname):
-    type_ = inspect.signature(SAQC_FUNCS[funcname]).parameters[name].annotation
-
-    # Special
-    if value == 'None':
-        return None
-
-    # Parsing
-    if type_ is bool and value == 'False':
-        return False
-    if type_ is not inspect._empty:  # we have a casting type
-        try:
-            return type_(value)
-        except (ValueError, TypeError):
-            raise ValueError(
-                f"Could not cast '{value}' to needed type '{type_.__name__}'."
-            )
-
-    # Guessing by user submitted value
-    if value in ['True', 'False']:
-        type_ = eval
-    elif value in ['nan', 'inf', '-inf']:
-        type_ = float
-    else:
-        type_ = str
-    return type_(value)
 
 
 @app.callback(
@@ -163,13 +148,16 @@ def cb_update_graph(submit_n, params_unused, funcname):
         key = key.split('.')[0]
         if not key.startswith('{'):
             continue
+
         param_name = json.loads(key)['id']
+        target_type = inspect.signature(SAQC_FUNCS[funcname]).parameters[
+            param_name].annotation
 
         # process and parse value
         try:
             if value is None or value == "":
-                raise ValueError(f"Missing value for parameter '{key}'")
-            parsed = parse_param(param_name, value, funcname)
+                raise ValueError(f"Missing value for parameter '{param_name}'")
+            parsed = parse_param(value, target_type)
         except ValueError as e:
             alerts.append(dbc.Alert(str(e), color="danger"))
             submit = False
@@ -214,13 +202,15 @@ def cb_fill_parameters(funcname):
             default = str(p.default)
 
         type_ = p.annotation
+        hint = type_repr(type_)
         if type_ is inspect._empty:
-            type_ = None
+            type_, hint = None, ''
 
         # using a dict as ``id`` makes pattern matching callbacks possible
         id = {"group": "param", "id": name}
-        txt = f"{name}" + ("" if type_ is None else f" ({type_.__name__})")
-        form = text_value_input(text=txt, id=id, type='text', value=default, raw=True)
+        form = text_value_input(
+            text=f"{name}: {hint}", id=id, type='text', value=default, raw=True
+        )
         forms.append(form)
 
     return dbc.Form(forms), False
@@ -230,10 +220,10 @@ app.layout = dbc.Container(
     [
         html.H1("SaQC Configurator"),
 
-        dbc.Card([
-            dbc.CardHeader('Input section'),
-            dbc.CardBody([input_section]),
-        ]),
+        # dbc.Card([
+        #     dbc.CardHeader('Input section'),
+        #     dbc.CardBody([input_section]),
+        # ]),
 
         html.Br(),
 
