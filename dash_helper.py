@@ -5,6 +5,11 @@ import dash_bootstrap_components as dbc
 import saqc.lib.types as saqc_types
 import inspect
 
+
+# ===========================================================================
+# Parsing
+# ===========================================================================
+
 TYPE_MAPPING = {
     saqc_types.ColumnName: str,
     saqc_types.TimestampColumnName: str,
@@ -14,72 +19,82 @@ TYPE_MAPPING = {
     saqc_types.PositiveFloat: float,
 }
 
-
-def parse_param(value, target_type):
+def literal_eval_extended(node_or_string: str):
     """
-    handle type hints:
-        - str, int, float, bool, None
-        - saqc.types (see TYPE_MAPPING above)
-        - Union[.], Optional[.], Literal[.]
-    todo:
-        - list
-        - Tuple[.], List[.]
-        - Callable[.]
+    Safely evaluate an expression node or a string containing a Python
+    expression.  The string or node provided may only consist of the following
+    Python literal structures: strings, bytes, numbers, tuples, lists, dicts,
+    sets, booleans, and None.
+
+    Taken from ast package, thanks.
+    + Added 'nan' and 'inf' support
     """
+    from ast import (parse, Expression, Constant, Name, UnaryOp, UAdd, USub, Tuple,
+                     List, Dict, Set, BinOp, Add, Sub)
+    if isinstance(node_or_string, str):
+        node_or_string = parse(node_or_string, mode='eval')
+    if isinstance(node_or_string, Expression):
+        node_or_string = node_or_string.body
 
-    # Special
-    if value == 'None':
-        return None
+    def _convert_num(node):
+        if isinstance(node, Constant):
+            if type(node.value) in (int, float, complex):
+                return node.value
+        elif isinstance(node, Name) and node.id in ['nan', 'inf']:
+            return float(node.id)
+        raise ValueError('malformed node or string: ' + repr(node))
 
-    # forced string
-    if (value.startswith("\"") and value.endswith("\"")
-            or value.startswith("\"") and value.endswith("\"")):
-        return value[1:-1]
+    def _convert_signed_num(node):
+        if isinstance(node, UnaryOp) and isinstance(node.op, (UAdd, USub)):
+            operand = _convert_num(node.operand)
+            if isinstance(node.op, UAdd):
+                return + operand
+            else:
+                return - operand
+        return _convert_num(node)
 
-    # evaluate target type
-    if typing.get_origin(target_type) is typing.Union:
-        target_type = typing.get_args(target_type)
+    def _convert(node):
+        if isinstance(node, Constant):
+            return node.value
+        elif isinstance(node, Tuple):
+            return tuple(map(_convert, node.elts))
+        elif isinstance(node, List):
+            return list(map(_convert, node.elts))
+        elif isinstance(node, Set):
+            return set(map(_convert, node.elts))
+        elif isinstance(node, Dict):
+            return dict(zip(map(_convert, node.keys),
+                            map(_convert, node.values)))
+        elif isinstance(node, BinOp) and isinstance(node.op, (Add, Sub)):
+            left = _convert_signed_num(node.left)
+            right = _convert_num(node.right)
+            if isinstance(left, (int, float)) and isinstance(right, complex):
+                if isinstance(node.op, Add):
+                    return left + right
+                else:
+                    return left - right
+        return _convert_signed_num(node)
 
-    # recurse for Union and tuple typehints
-    if isinstance(target_type, tuple):
-        for t in target_type:
-            if t == type(None):  # noqa
-                continue
-            try:
-                return parse_param(value, t)
-            except (ValueError, TypeError):
-                continue
-        raise ValueError(
-            f"Could not cast '{value}' any type of '{type_repr(target_type)}'."
-        )
+    return _convert(node_or_string)
 
-    target_type = TYPE_MAPPING.get(target_type, target_type)
 
-    if typing.get_origin(target_type) is typing.Literal:
-        target_type = str
+def type_repr(t, pretty=True):
+    # HINT: a.o. Union[.] has no __name__ attribute
+    s = getattr(t, '__name__', repr(t))
+    if pretty:
+        s = (s.replace('typing.', '')
+             .replace('NoneType', 'None')
+             .replace('Union', '')
+             )
+        # rm `[` and `]`
+        if typing.get_origin(t) is typing.Union:
+            s = s[1:-1]
+    return s
 
-    # Parsing
-    if target_type is bool and value == 'False':
-        return False
-    if target_type is not inspect._empty:  # we have a casting type
-        try:
-            return target_type(value)
-        except (ValueError, TypeError):
-            raise ValueError(
-                f"Could not cast '{value}' to needed type '{type_repr(target_type)}'."
-            )
 
-    # Guessing by user submitted value
-    if value in ['True', 'False']:
-        return eval(value)
-    try:
-        return int(value)
-    except (ValueError, TypeError):
-        try:
-            return float(value)
-        except (ValueError, TypeError):
-            pass
-    return value  # fall back to plain string
+# ===========================================================================
+# html creation helper
+# ===========================================================================
 
 
 def text_value_input(text, id, type="text", widths=(2, 10), row=True, raw=False, **kws):
@@ -98,28 +113,6 @@ def text_value_input(text, id, type="text", widths=(2, 10), row=True, raw=False,
     if raw:
         return form
     return dbc.Form(form)
-
-
-def type_repr(t, pretty=True):
-    # HINT: a.o. Union[.] has no __name__ attribute
-    s = getattr(t, '__name__', repr(t))
-    if pretty:
-        if isinstance(t, tuple) and len(t):
-            s = '('
-            for sub in t:
-                s += type_repr(sub, pretty=True) + ','
-            if len(t) > 1:
-                s = s[:-1]
-            return s + ')'
-
-        s = (s.replace('typing.', '')
-             .replace('NoneType', 'None')
-             .replace('Union', '')
-             )
-        # rm `[` and `]`
-        if typing.get_origin(t) is typing.Union:
-            s = s[1:-1]
-    return s
 
 
 def DivRow(children, widths=(2, 10)):

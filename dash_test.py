@@ -9,12 +9,14 @@ import typing
 import dash
 import dash_core_components as dcc
 import dash_html_components as html
+import typeguard
 from dash.dependencies import Input, Output, State, ALL, MATCH
 import dash_bootstrap_components as dbc
 import dash_table
 import plotly.express as px
 
-from dash_helper import text_value_input, DivRow, parse_param, type_repr
+from dash_helper import text_value_input, DivRow, type_repr, literal_eval_extended, \
+    TYPE_MAPPING
 
 import pandas as pd
 import numpy as np
@@ -24,11 +26,13 @@ import io
 import saqc.funcs
 from saqc.lib.types import FreqString, PositiveInt
 
+IGNORED_PARAMS = ['data', 'flags', 'field', 'kwargs']
 AGG_METHODS = ['mean', 'min', 'max', 'sum']  # first is default
 
 
 def test(
         data, field, flags,
+        extralong_neverending_yes_its_long_kw=None,
         kw1: int = 9,
         kw2: bool = False,
         kw3: int = None,
@@ -109,12 +113,23 @@ preview_section = html.Div([
 
     html.Br(),
 
+    dbc.FormGroup(
+        [
+            dbc.Checkbox(
+                id="disable-type-checks", className="form-check-input"
+            ),
+            dbc.Label(
+                "Disable type checks",
+                html_for="disable-type-checks",
+                className="form-check-label",
+            ),
+        ],
+        check=True,
+    ),
     dbc.Button("Submit", id='submit', block=True),
     html.Div([], id='error-container'),
     dbc.Card("Result", body=True, id='show'),
 ])
-
-
 
 
 @app.callback(
@@ -131,8 +146,9 @@ def cb_validate_param_input(value):
     Input('submit', 'n_clicks'),
     State({'group': 'param', 'id': ALL}, 'value'),
     State('function-select', 'value'),
+    State('disable-type-checks', 'checked'),
 )
-def cb_update_graph(submit_n, params_unused, funcname):
+def cb_update_graph(submit_n, params_unused, funcname, nochecks):
     alerts = []
     if submit_n is None:
         return ['Nothing happened yet'], alerts
@@ -142,28 +158,47 @@ def cb_update_graph(submit_n, params_unused, funcname):
     out = []
     kws_to_func = {}
     submit = True
+    ignore_to_check = IGNORED_PARAMS
     # a state entry for a parameter look like this:
     # '{"group": "param", "id": name}.value': '255.0'
     for key, value in ctx.states.items():
         key = key.split('.')[0]
         if not key.startswith('{'):
             continue
-
         param_name = json.loads(key)['id']
-        target_type = inspect.signature(SAQC_FUNCS[funcname]).parameters[
-            param_name].annotation
 
         # process and parse value
+        msg = ""
         try:
+            # Empty value
             if value is None or value == "":
-                raise ValueError(f"Missing value for parameter '{param_name}'")
-            parsed = parse_param(value, target_type)
-        except ValueError as e:
-            alerts.append(dbc.Alert(str(e), color="danger"))
+                msg = f"Missing value for parameter '{param_name}'"
+                raise ValueError
+            msg = f"Parsing failed for parameter '{param_name}' for value '{value}'"
+            parsed = literal_eval_extended(value)
+        except (SyntaxError, ValueError):
+            alerts.append(dbc.Alert(msg, color="danger"))
+            ignore_to_check.append(param_name)
             submit = False
             continue
 
         kws_to_func[param_name] = parsed
+
+    if not nochecks:
+        for pname, param in inspect.signature(SAQC_FUNCS[funcname]).parameters.items():
+            if pname in ignore_to_check:
+                continue
+            a = param.annotation
+            if a is inspect._empty:
+                continue
+            a = TYPE_MAPPING.get(a, a)
+            if param.default is None:
+                a = typing.Union[a, None]
+            try:
+                typeguard.check_type(pname, kws_to_func[pname], a)
+            except TypeError as e:
+                alerts.append(dbc.Alert(str(e), color="danger"))
+                submit = False
 
     if submit:
         txt, color = 'Success\n', 'success'
@@ -189,8 +224,7 @@ def cb_fill_parameters(funcname):
         return dbc.Form(['No parameters to set']), True
 
     parameters = inspect.signature(func).parameters
-    ignore = ['data', 'flags', 'field', 'kwargs']
-    pnames = [p for p in parameters if p not in ignore]
+    pnames = [p for p in parameters if p not in IGNORED_PARAMS]
 
     forms = []
     for name in pnames:
@@ -199,7 +233,7 @@ def cb_fill_parameters(funcname):
         if p.default == inspect._empty:
             default = None
         else:
-            default = str(p.default)
+            default = repr(p.default)
 
         type_ = p.annotation
         hint = type_repr(type_)
@@ -208,8 +242,18 @@ def cb_fill_parameters(funcname):
 
         # using a dict as ``id`` makes pattern matching callbacks possible
         id = {"group": "param", "id": name}
-        form = text_value_input(
-            text=f"{name}: {hint}", id=id, type='text', value=default, raw=True
+
+        form = dbc.FormGroup(
+            [
+                dbc.Label(html.B(name), html_for=id, width=2),
+                dbc.Col(
+                    [
+                        dbc.Input(type='text', id=id, value=default),
+                        dbc.FormText(html.Pre(hint))
+                    ], width=10
+                ),
+            ],
+            row=True
         )
         forms.append(form)
 
