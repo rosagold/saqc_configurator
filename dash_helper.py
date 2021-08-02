@@ -11,6 +11,7 @@ import inspect
 # ===========================================================================
 
 TYPE_MAPPING = {
+    inspect._empty: typing.Any,
     saqc_types.ColumnName: str,
     saqc_types.TimestampColumnName: str,
     saqc_types.FreqString: str,

@@ -44,6 +44,11 @@ def test(
         union: typing.Union[int, float] = 0,
         tup: (int, float) = 0,
         li: typing.Literal['a', 'b', 'c'] = 'a',
+        lilong: typing.Literal['a',
+                               'some foo and stuff that makes the line long',
+                               'some foo and stuff that makes the line long',
+                               'some foo and stuff that makes the line long',
+                               'oh no another very long literal','b', 'c'] = 'a',
         op1: int = None,
         op2: typing.Optional[int] = None,
         op3: typing.Optional[int] = 7,
@@ -73,7 +78,6 @@ app = dash.Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP])
 
 input_section = html.Div([
     DivRow(["Data", dcc.Upload(dbc.Button("Upload File"), id='upload-data')]),
-    html.Div([]),
 
     text_value_input("Header row", type='n', value=0, id=f"header-row"),
     text_value_input("Index column", type="number", min=0, value=0, id="index-col"),
@@ -108,107 +112,102 @@ preview_section = html.Div([
 
     dbc.Card([
         dbc.CardHeader(f'Parameter for selected function'),
-        dbc.CardBody([dbc.Form("")], id='parameters')
+        dbc.CardBody([dbc.Form("")], id='parameters'),
+        dbc.CardFooter([
+            dbc.Button("Submit", id='submit', block=True),
+            html.Div([], id='error-container'),
+        ]),
     ]),
 
     html.Br(),
 
-    dbc.FormGroup(
-        [
-            dbc.Checkbox(
-                id="disable-type-checks", className="form-check-input"
-            ),
-            dbc.Label(
-                "Disable type checks",
-                html_for="disable-type-checks",
-                className="form-check-label",
-            ),
-        ],
-        check=True,
-    ),
-    dbc.Button("Submit", id='submit', block=True),
-    html.Div([], id='error-container'),
     dbc.Card("Result", body=True, id='show'),
 ])
 
 
 @app.callback(
     Output({'group': 'param', 'id': MATCH}, 'invalid'),
+    Output({'group': 'param-err', 'id': MATCH}, 'children'),
     Input({'group': 'param', 'id': MATCH}, 'value'),
+    State({'group': 'param', 'id': MATCH}, 'id'),
+    State('function-select', 'value'),
 )
-def cb_validate_param_input(value):
-    return value is None or value == ''
+def cb_validate_param_input(value, id, funcname):
+    param_name = id['id']
+    failed, msg = False, ""
+
+    if value is None:
+        return True, []
+
+    # Empty value after user already was in the input form
+    if value == "":
+        failed, msg = 'danger', f"Missing value."
+
+    else:
+        # prepare type check
+        param = inspect.signature(SAQC_FUNCS[funcname]).parameters[param_name]
+        a = param.annotation
+        a = TYPE_MAPPING.get(a, a)
+        # sometimes the written typehints in saqc aren't explicit about None
+        if param.default is None:
+            a = typing.Union[a, None]
+
+        # parse and check
+        try:
+            parsed = literal_eval_extended(value)
+            try:
+                typeguard.check_type(param_name, parsed, a)
+            except TypeError as e:
+                failed, msg = 'warning', f"Type check failed: {e}"
+        except (TypeError, SyntaxError):
+            failed, msg = 'danger', f"Invalid Syntax."
+        except ValueError:
+            failed, msg = 'danger', f"Invalid value."
+
+    if failed == 'danger':
+        children = dbc.Alert([html.B('Error: '), msg], color=failed)
+    elif failed == 'warning':
+        children = dbc.Alert([html.B('Warning: '), msg], color=failed)
+        failed = False
+    else:
+        children = []
+
+    return bool(failed), children
 
 
 @app.callback(
-    Output('show', 'children'),
     Output('error-container', 'children'),
+    Output('show', 'children'),
     Input('submit', 'n_clicks'),
+    State({'group': 'param', 'id': ALL}, 'id'),
     State({'group': 'param', 'id': ALL}, 'value'),
-    State('function-select', 'value'),
-    State('disable-type-checks', 'checked'),
 )
-def cb_update_graph(submit_n, params_unused, funcname, nochecks):
-    alerts = []
+def cb_update_graph(submit_n, param_ids, param_values):
     if submit_n is None:
-        return ['Nothing happened yet'], alerts
+        return [], ['Nothing happened yet']
 
-    ctx = dash.callback_context
-
-    out = []
     kws_to_func = {}
     submit = True
-    ignore_to_check = IGNORED_PARAMS
-    # a state entry for a parameter look like this:
-    # '{"group": "param", "id": name}.value': '255.0'
-    for key, value in ctx.states.items():
-        key = key.split('.')[0]
-        if not key.startswith('{'):
-            continue
-        param_name = json.loads(key)['id']
 
-        # process and parse value
-        msg = ""
+    # parse values, all checks are already done, in the input-form-callback
+    for i, id_dict in enumerate(param_ids):
+        param_name = id_dict['id']
+        value = param_values[i]
         try:
-            # Empty value
-            if value is None or value == "":
-                msg = f"Missing value for parameter '{param_name}'"
-                raise ValueError
-            msg = f"Parsing failed for parameter '{param_name}' for value '{value}'"
-            parsed = literal_eval_extended(value)
+            kws_to_func[param_name] = literal_eval_extended(value)
         except (SyntaxError, ValueError):
-            alerts.append(dbc.Alert(msg, color="danger"))
-            ignore_to_check.append(param_name)
             submit = False
-            continue
-
-        kws_to_func[param_name] = parsed
-
-    if not nochecks:
-        for pname, param in inspect.signature(SAQC_FUNCS[funcname]).parameters.items():
-            if pname in ignore_to_check:
-                continue
-            a = param.annotation
-            if a is inspect._empty:
-                continue
-            a = TYPE_MAPPING.get(a, a)
-            if param.default is None:
-                a = typing.Union[a, None]
-            try:
-                typeguard.check_type(pname, kws_to_func[pname], a)
-            except TypeError as e:
-                alerts.append(dbc.Alert(str(e), color="danger"))
-                submit = False
 
     if submit:
-        txt, color = 'Success\n', 'success'
+        txt = 'Great Success\n=============\n'
+        for k, v in kws_to_func.items():
+            txt += f"{k}={repr(v)} ({type(v).__name__})\n"
+        alert, out = [], html.Pre(txt)
     else:
-        txt, color = 'Failed\n', 'danger'
-    for k, v in kws_to_func.items():
-        txt += f"'{k}' is '{v}' of type '{type(v).__name__}'\n"
-    out.append(dbc.Alert(html.Pre(txt), color=color))
+        alert = dbc.Alert("Missing fields or errors above.", color='danger'),
+        out = html.Pre('Failed')
 
-    return html.Div(out), alerts
+    return alert, out
 
 
 @app.callback(
@@ -248,10 +247,11 @@ def cb_fill_parameters(funcname):
                 dbc.Label(html.B(name), html_for=id, width=2),
                 dbc.Col(
                     [
-                        dbc.Input(type='text', id=id, value=default),
+                        dbc.Input(type='text', value=default, id=id),
                         dbc.FormText(html.Pre(hint))
                     ], width=10
                 ),
+                dbc.Col([], width=12, id={"group": "param-err", "id": name}),
             ],
             row=True
         )
