@@ -5,65 +5,24 @@
 import inspect
 import json
 import typing
-
-import dash
-import dash_core_components as dcc
-import dash_html_components as html
 import typeguard
-from dash.dependencies import Input, Output, State, ALL, MATCH
-import dash_bootstrap_components as dbc
-import dash_table
-import plotly.express as px
-
-from dash_helper import text_value_input, DivRow, type_repr, literal_eval_extended, \
-    TYPE_MAPPING
-
 import pandas as pd
 import numpy as np
 import base64
 import datetime
 import io
-import saqc.funcs
-from saqc.lib.types import FreqString, PositiveInt
 
-IGNORED_PARAMS = ['data', 'flags', 'field', 'kwargs']
-AGG_METHODS = ['mean', 'min', 'max', 'sum']  # first is default
+import dash
+import dash_core_components as dcc
+import dash_html_components as html
+from dash.dependencies import Input, Output, State, ALL, MATCH
+import dash_bootstrap_components as dbc
+import dash_table
+import plotly.express as px
 
-
-def test(
-        data, field, flags,
-        extralong_neverending_yes_its_long_kw=None,
-        kw1: int = 9,
-        kw2: bool = False,
-        kw3: int = None,
-        kw31=None,
-        kw4=np.nan,
-        kw6=-np.inf,
-        kw7: PositiveInt = 9,
-        freq: FreqString = '9d',
-        union: typing.Union[int, float] = 0,
-        tup: (int, float) = 0,
-        li: typing.Literal['a', 'b', 'c'] = 'a',
-        lilong: typing.Literal['a',
-                               'some foo and stuff that makes the line long',
-                               'some foo and stuff that makes the line long',
-                               'some foo and stuff that makes the line long',
-                               'oh no another very long literal','b', 'c'] = 'a',
-        op1: int = None,
-        op2: typing.Optional[int] = None,
-        op3: typing.Optional[int] = 7,
-        **kwargs
-):
-    pass
-
-
-SAQC_FUNCS = {
-    "None": None,  # default
-    'flagRange': saqc.funcs.flagRange,
-    'flagMAD': saqc.funcs.flagMAD,
-    'flagDummy': saqc.funcs.flagDummy,
-    'test': test,
-}
+import docstring_parser as docparse
+from helper import text_value_input, DivRow, type_repr, literal_eval_extended
+from const import AGG_METHODS, SAQC_FUNCS, TYPE_MAPPING, IGNORED_PARAMS
 
 df_name = "https://raw.githubusercontent.com/plotly/datasets/master/solar.csv"
 df = pd.read_csv('https://raw.githubusercontent.com/plotly/datasets/master/solar.csv',
@@ -111,11 +70,11 @@ preview_section = html.Div([
     ]),
 
     dbc.Card([
-        dbc.CardHeader(f'Parameter for selected function'),
-        dbc.CardBody([dbc.Form("")], id='parameters'),
+        dbc.CardHeader([], id='parameter-header'),  # filled by callback
+        dbc.CardBody([], id='parameters'),  # filled by callback
         dbc.CardFooter([
             dbc.Button("Submit", id='submit', block=True),
-            html.Div([], id='error-container'),
+            html.Div([], id='error-container'),  # filled by callback
         ]),
     ]),
 
@@ -123,6 +82,16 @@ preview_section = html.Div([
 
     dbc.Card("Result", body=True, id='show'),
 ])
+
+
+@app.callback(
+    Output('parameter-header', 'children'),
+    Input('function-select', 'value'),
+)
+def cb_param_header(funcname):
+    if funcname is None:
+        return []
+    return html.H4(funcname)
 
 
 @app.callback(
@@ -184,7 +153,7 @@ def cb_validate_param_input(value, id, funcname):
 )
 def cb_update_graph(submit_n, param_ids, param_values):
     if submit_n is None:
-        return [], ['Nothing happened yet']
+        return [], []
 
     kws_to_func = {}
     submit = True
@@ -222,25 +191,40 @@ def cb_fill_parameters(funcname):
     if func is None:
         return dbc.Form(['No parameters to set']), True
 
-    parameters = inspect.signature(func).parameters
-    pnames = [p for p in parameters if p not in IGNORED_PARAMS]
+    children = []
+    param_forms = []
 
-    forms = []
+    # docstring
+    docstr = docparse.parse(func.__doc__)
+    for o in [docstr.short_description, docstr.long_description, *docstr.meta]:
+        if o is None or isinstance(o, (
+        docparse.DocstringParam, docparse.DocstringReturns)):
+            continue
+        if not isinstance(o, str):
+            o = f"#### {o.args[0].capitalize()}\n{o.description}"
+        children.append(dcc.Markdown(o))
+
+    # dynamically add param input fields
+    params_docstr = {p.arg_name: p.description for p in docstr.params}
+    params = inspect.signature(func).parameters
+    pnames = [p for p in params if p not in IGNORED_PARAMS]
     for name in pnames:
-        p = parameters[name]
+        p = params[name]
 
-        if p.default == inspect._empty:
+        if p.default == inspect.Parameter.empty:
             default = None
         else:
             default = repr(p.default)
 
         type_ = p.annotation
         hint = type_repr(type_)
-        if type_ is inspect._empty:
+        if type_ is inspect.Parameter.empty:
             type_, hint = None, ''
 
         # using a dict as ``id`` makes pattern matching callbacks possible
         id = {"group": "param", "id": name}
+
+        docu = dcc.Markdown(params_docstr.get(name, []))
 
         form = dbc.FormGroup(
             [
@@ -251,23 +235,27 @@ def cb_fill_parameters(funcname):
                         dbc.FormText(html.Pre(hint))
                     ], width=10
                 ),
+                dbc.Col(docu, width=12),
                 dbc.Col([], width=12, id={"group": "param-err", "id": name}),
             ],
             row=True
         )
-        forms.append(form)
+        param_forms.append(html.Hr())
+        param_forms.append(form)
 
-    return dbc.Form(forms), False
+    children.append(dbc.Form(param_forms))
+
+    return children, False
 
 
 app.layout = dbc.Container(
     [
         html.H1("SaQC Configurator"),
 
-        # dbc.Card([
-        #     dbc.CardHeader('Input section'),
-        #     dbc.CardBody([input_section]),
-        # ]),
+        dbc.Card([
+            dbc.CardHeader('Input section'),
+            dbc.CardBody([input_section]),
+        ]),
 
         html.Br(),
 

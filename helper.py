@@ -2,23 +2,11 @@
 import typing
 
 import dash_bootstrap_components as dbc
-import saqc.lib.types as saqc_types
-import inspect
 
 
 # ===========================================================================
 # Parsing
 # ===========================================================================
-
-TYPE_MAPPING = {
-    inspect._empty: typing.Any,
-    saqc_types.ColumnName: str,
-    saqc_types.TimestampColumnName: str,
-    saqc_types.FreqString: str,
-    saqc_types.IntegerWindow: int,
-    saqc_types.PositiveInt: int,
-    saqc_types.PositiveFloat: float,
-}
 
 def literal_eval_extended(node_or_string: str):
     """
