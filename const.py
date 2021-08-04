@@ -2,6 +2,9 @@
 
 import typing
 import inspect
+
+import pandas as pd
+
 import saqc.funcs
 import saqc
 import numpy as np
@@ -13,6 +16,11 @@ from saqc.lib.types import (
 IGNORED_PARAMS = ['data', 'flags', 'field', 'kwargs']
 AGG_METHODS = ['mean', 'min', 'max', 'sum']  # first is default
 
+RANDOM_TYPES = [
+    {"label": "with outlier", "value": 1},
+    {"label": "with plateaus", "value": 2},
+    {"label": "with gaps/NaNs", "value": 3},
+]
 
 TYPE_MAPPING = {
     inspect.Parameter.empty: typing.Any,
@@ -22,6 +30,11 @@ TYPE_MAPPING = {
     IntegerWindow: int,
     PositiveInt: int,
     PositiveFloat: float,
+}
+
+PARSER_MAPPING = {
+    'csv': pd.read_csv,
+    'xls': pd.read_excel,
 }
 
 

@@ -1,5 +1,8 @@
 #!/usr/bin/env python
 import typing
+import base64
+import datetime
+import io
 
 import dash_bootstrap_components as dbc
 
@@ -7,6 +10,9 @@ import dash_bootstrap_components as dbc
 # ===========================================================================
 # Parsing
 # ===========================================================================
+import litereval
+import pandas as pd
+
 
 def literal_eval_extended(node_or_string: str):
     """
@@ -81,12 +87,41 @@ def type_repr(t, pretty=True):
     return s
 
 
+def parse_keywords(kwstr):
+    try:
+        parsed = litereval.litereval('{' + kwstr + '}')
+    except (ValueError, TypeError, SyntaxError):
+        raise SyntaxError
+    if not isinstance(parsed, dict):
+        raise SyntaxError
+    for key in parsed.keys():
+        if not isinstance(key, str):
+            raise SyntaxError
+    return parsed
+
+
+def parse_data(filename: str, file_type, content, parse_kws=None):
+    if parse_kws is None:
+        parse_kws = {}
+    if file_type is None:
+        file_type = 'csv'
+        if filename.endswith('.csv'):
+            file_type = 'csv'
+        elif filename.endswith('.xls'):
+            file_type = 'xls'
+    if file_type == 'csv':
+        return pd.read_csv(io.StringIO(content.decode('utf-8')), **parse_kws)
+    elif file_type == 'xls':
+        return pd.read_excel(io.BytesIO(content), **parse_kws)
+    else:
+        raise ValueError('Unknown filetype')
+
 # ===========================================================================
 # html creation helper
 # ===========================================================================
 
 
-def text_value_input(text, id, type="text", widths=(2, 10), row=True, raw=False, **kws):
+def FormGroupInput(text, id, type="text", widths=(2, 10), row=True, raw=False, **kws):
     if type in ['t', 'txt', 'text']:
         type = 'text'
     if type in ['n', 'nr', 'number']:

@@ -2,6 +2,7 @@
 
 # Run this app with `python app.py` and
 # visit http://127.0.0.1:8050/ in your web browser.
+import base64
 import inspect
 import json
 import typing
@@ -9,21 +10,20 @@ import typing
 import numpy as np
 import typeguard
 import pandas as pd
-import base64
-import datetime
-import io
 
 import dash
 import dash_core_components as dcc
-import dash_html_components as html
-from dash.dependencies import Input, Output, State, ALL, MATCH
 import dash_bootstrap_components as dbc
+import dash_html_components as html
+from dash.exceptions import PreventUpdate
+from dash.dependencies import Input, Output, State, ALL, MATCH
 import dash_table
+import litereval
 import plotly.express as px
 
 import docstring_parser as docparse
-from helper import text_value_input, DivRow, type_repr, literal_eval_extended
-from const import AGG_METHODS, SAQC_FUNCS, TYPE_MAPPING, IGNORED_PARAMS
+from helper import parse_data, type_repr, literal_eval_extended, parse_keywords
+from const import AGG_METHODS, SAQC_FUNCS, TYPE_MAPPING, IGNORED_PARAMS, PARSER_MAPPING
 from app import app
 
 
@@ -31,38 +31,56 @@ from app import app
 # Input section
 # ======================================================================
 
-@app.callback(
-    Output('upload-data', 'contents'),
-    Input('random-data', 'n_clicks'),
-)
-def cb_random_data(clicked):
-    if clicked:
-        return 'random'
-    return None
-
 
 @app.callback(
     Output('df-preview', 'children'),
+    Output('upload-error', 'children'),
+    Output('parser-kwargs', 'invalid'),
+    # Random
+    Input('random-data', 'n_clicks'),
+    # Datafile
     Input('upload-data', 'contents'),
-    State('header-row', 'value'),
-    State('index-column', 'value'),
-    State('data-column', 'value'),
+    Input('datafile-type', 'value'),
+    Input('parser-kwargs', 'value'),
+    State('upload-data', 'filename'),
 )
-def cb_df_preview(data, hrow, icol, dcol):
-    if data is None:
-        return []
+def cb_df_preview(random, content, filetype, parser_kws, filename):
+    preview, alert, invalid = [], [], False
+    ctx = dash.callback_context
+    if not ctx.triggered:
+        raise PreventUpdate
 
-    if data == 'random':
+    trigger = ctx.triggered[0]['prop_id'].split('.')[0]
+
+    # Random button
+    if trigger == 'random-data':
+        if random is None:
+            raise PreventUpdate
         r = np.random.rand(990, 10) * 10
         df = pd.DataFrame(data=r, columns=list('abcdefghij'))
         df = df.round(2)
-        name = 'random_data'
-    else:
-        name = ''
-        df = pd.DataFrame()
+        filename = 'random_data'
 
-    return [
-        html.B(name),
+    # Upload button
+    else:
+        if content is None:
+            raise PreventUpdate
+        try:
+            parser_kws = parse_keywords(parser_kws)
+        except SyntaxError:
+            msg = "Keyword parsing error: Syntax: 'key1=..., key3=..., key3=...'"
+            return preview, dbc.Alert(msg, color='danger'), True
+
+        content_type, content_string = content.split(',')
+        decoded = base64.b64decode(content_string)
+        try:
+            df = parse_data(filename, filetype, decoded, parser_kws)
+        except Exception as e:
+            msg = f"Data parsing error: {repr(e)}"
+            return preview, dbc.Alert(msg, color='danger'), False
+
+    preview = [
+        html.B(filename),
         dash_table.DataTable(
             data=df.to_dict(orient='records'),
             columns=[{'name': str(i), 'id': str(i)} for i in df.columns],
@@ -75,11 +93,47 @@ def cb_df_preview(data, hrow, icol, dcol):
             },
         ),
     ]
+    return preview, alert, invalid
     return dbc.Table.from_dataframe(
         df,
         bordered=True,
         hover=True,
     )
+
+
+@app.callback(
+    Output('add_to_config', 'disabled'),
+    Input('submit', 'disabled'),
+)
+def cb_enable_add_to_config(submit):
+    return submit
+
+
+@app.callback(
+    Output('config-preview', 'value'),
+    Input('add_to_config', 'n_clicks'),
+    Input('clear-config', 'n_clicks'),
+    Input('upload-config', 'contents'),
+    State('upload-config', 'filename'),
+    State('config-preview', 'value'),
+)
+def cb_config_preview(add, clear, content, filename, config):
+    if config is None:
+        config = ''
+    ctx = dash.callback_context
+    if not ctx.triggered:
+        raise PreventUpdate
+    trigger = ctx.triggered[0]['prop_id'].split('.')[0]
+    print(trigger)
+    if trigger == 'add_to_config':
+        return config + f"add {add}\n"
+    if trigger == 'clear-config':
+        return ''
+
+    content_type, content_string = content.split(',')
+    decoded = base64.b64decode(content_string)
+    s = decoded.decode('utf-8')
+    return s
 
 
 # ======================================================================
@@ -92,7 +146,7 @@ def cb_df_preview(data, hrow, icol, dcol):
 )
 def cb_params_header(funcname):
     if funcname is None:
-        return []
+        raise PreventUpdate
     return html.H4(funcname)
 
 
@@ -114,10 +168,11 @@ def cb_params_body(funcname):
             - alert
     """
     if funcname is None:
-        funcname = 'None'
+        raise PreventUpdate
+
     func = SAQC_FUNCS[funcname]
     if func is None:
-        return dbc.Form(['No parameters to set']), True
+        return dbc.Form(['No parameters to set']), False
 
     children = []
     param_forms = []
@@ -160,7 +215,7 @@ def cb_params_body(funcname):
                 dbc.Col(
                     [
                         dbc.Input(type='text', value=default, id=id),
-                        dbc.FormText(html.Pre(hint))
+                        dbc.FormText(hint, color='secondary')
                     ], width=10
                 ),
                 dbc.Col(docu, width=12),
