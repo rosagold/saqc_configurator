@@ -22,6 +22,8 @@ import litereval
 import plotly.express as px
 
 import docstring_parser as docparse
+
+import saqc
 from helper import parse_data, type_repr, literal_eval_extended, parse_keywords
 from const import AGG_METHODS, SAQC_FUNCS, TYPE_MAPPING, IGNORED_PARAMS, PARSER_MAPPING
 from app import app
@@ -33,9 +35,10 @@ from app import app
 
 
 @app.callback(
-    Output('df-preview', 'children'),
     Output('upload-error', 'children'),
     Output('parser-kwargs', 'invalid'),
+    Output('df', 'data'),
+    Output('upload-data', 'filename'),
     # Random
     Input('random-data', 'n_clicks'),
     # Datafile
@@ -44,8 +47,7 @@ from app import app
     Input('parser-kwargs', 'value'),
     State('upload-data', 'filename'),
 )
-def cb_df_preview(random, content, filetype, parser_kws, filename):
-    preview, alert, invalid = [], [], False
+def cb_parse_data(random, content, filetype, parser_kws, filename):
     ctx = dash.callback_context
     if not ctx.triggered:
         raise PreventUpdate
@@ -69,7 +71,7 @@ def cb_df_preview(random, content, filetype, parser_kws, filename):
             parser_kws = parse_keywords(parser_kws)
         except SyntaxError:
             msg = "Keyword parsing error: Syntax: 'key1=..., key3=..., key3=...'"
-            return preview, dbc.Alert(msg, color='danger'), True
+            return dbc.Alert(msg, color='danger'), True, None, filename
 
         content_type, content_string = content.split(',')
         decoded = base64.b64decode(content_string)
@@ -77,13 +79,25 @@ def cb_df_preview(random, content, filetype, parser_kws, filename):
             df = parse_data(filename, filetype, decoded, parser_kws)
         except Exception as e:
             msg = f"Data parsing error: {repr(e)}"
-            return preview, dbc.Alert(msg, color='danger'), False
+            return dbc.Alert(msg, color='danger'), False, None, filename
 
+    df_dict = df.to_dict(orient='records')
+    return [], False, df_dict, filename
+
+
+@app.callback(
+    Output('df-preview', 'children'),
+    Input('df', 'data'),
+    State('upload-data', 'filename'),
+)
+def cb_df_preview(df_records, filename):
+    if df_records is None:
+        raise PreventUpdate
     preview = [
         html.B(filename),
         dash_table.DataTable(
-            data=df.to_dict(orient='records'),
-            columns=[{'name': str(i), 'id': str(i)} for i in df.columns],
+            data=df_records,
+            columns=[{'name': str(i), 'id': str(i)} for i in df_records[0].keys()],
             page_size=10,
             style_table={'overflowX': 'auto'},
             style_cell={'textAlign': 'left'},
@@ -93,13 +107,7 @@ def cb_df_preview(random, content, filetype, parser_kws, filename):
             },
         ),
     ]
-    return preview, alert, invalid
-    return dbc.Table.from_dataframe(
-        df,
-        bordered=True,
-        hover=True,
-    )
-
+    return preview
 
 @app.callback(
     Output('add_to_config', 'disabled'),
@@ -292,8 +300,10 @@ def cb_param_validation(value, id, funcname):
     Input('submit', 'n_clicks'),
     State({'group': 'param', 'id': ALL}, 'id'),
     State({'group': 'param', 'id': ALL}, 'value'),
+    State('function-select', 'value'),
+    State('df', 'data'),
 )
-def cb_submit(submit_n, param_ids, param_values):
+def cb_submit(submit_n, param_ids, param_values, funcname, df_records):
     """
     parse all inputs.
     if successful calculate result TODO: text and plotted flags
@@ -314,13 +324,26 @@ def cb_submit(submit_n, param_ids, param_values):
         except (SyntaxError, ValueError):
             submit = False
 
-    if submit:
-        txt = 'Great Success\n=============\n'
-        for k, v in kws_to_func.items():
-            txt += f"{k}={repr(v)} ({type(v).__name__})\n"
-        alert, out = [], html.Pre(txt)
-    else:
+    if not submit:
         alert = dbc.Alert("Errors or missing fields above.", color='danger'),
         out = html.Pre('Failed')
+        return alert, out
 
-    return alert, out
+    txt = 'Great Success\n=============\n'
+    for k, v in kws_to_func.items():
+        txt += f"{k}={repr(v)} ({type(v).__name__})\n"
+
+    df = pd.DataFrame.from_records(df_records)
+    qc = saqc.SaQC(df)
+    func = SAQC_FUNCS[funcname]
+    saqcobj_funcname = f"{func._module}.{func.__name__}"
+    func = getattr(qc, saqcobj_funcname)
+    field = 'a'
+    result = func(field=field, **kws_to_func)
+    curr = f"qc.{saqcobj_funcname}("
+    for k, v in kws_to_func.items():
+        curr += f"{k}={v},"
+    curr += ')\n'
+    txt = curr
+    print(result, type(result))
+    return [], html.Pre(txt)

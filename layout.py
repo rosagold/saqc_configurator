@@ -213,7 +213,7 @@ function_section = html.Div(
 
 layout = dbc.Container(
     [
-        dcc.Store(id="store"),
+        dcc.Store(id="df"),
         html.H1("SaQC Configurator"),
         dbc.Card(
             [
