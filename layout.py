@@ -181,7 +181,7 @@ function_section = html.Div(
                                             "Preview",
                                             block=True,
                                             disabled=True,
-                                            id="submit",
+                                            id="preview",
                                         ),
                                     ],
                                     width=6,
@@ -192,7 +192,7 @@ function_section = html.Div(
                                             "Add to config",
                                             block=True,
                                             disabled=True,
-                                            id="add_to_config",
+                                            id="add-to-config",
                                         ),
                                     ],
                                     width=6,
@@ -214,6 +214,7 @@ function_section = html.Div(
 layout = dbc.Container(
     [
         dcc.Store(id="df"),
+        dcc.Store(id="func_repr"),
         html.H1("SaQC Configurator"),
         dbc.Card(
             [

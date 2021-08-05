@@ -29,60 +29,71 @@ from const import AGG_METHODS, SAQC_FUNCS, TYPE_MAPPING, IGNORED_PARAMS, PARSER_
 from app import app
 
 
+def df_dumps(df):
+    if not df.index.name:
+        df.index.name = 'index'
+    df = df.reset_index()
+    return df.to_json(orient='split', double_precision=15),
+
+
+def df_loads(s):
+    return pd.read_json(s[0], orient='split', precise_float=True)
+
+
 # ======================================================================
 # Input section
 # ======================================================================
+
+@app.callback(
+    Output('upload-data', 'contents'),
+    Output('upload-data', 'filename'),
+    Input('random-data', 'n_clicks'),
+)
+def random_to_content(n):
+    if n is None:
+        raise PreventUpdate
+    rows = 990
+    start = np.random.randint(9466848, 16094592) * 10 ** 11
+    r = np.random.rand(rows, 10) * 10
+    i = pd.date_range(start=start, periods=rows, freq='10min')
+    df = pd.DataFrame(index=i, data=r, columns=list('abcdefghij'))
+    df = df.round(2)
+
+    return df_dumps(df), 'random_data'
 
 
 @app.callback(
     Output('upload-error', 'children'),
     Output('parser-kwargs', 'invalid'),
     Output('df', 'data'),
-    Output('upload-data', 'filename'),
-    # Random
-    Input('random-data', 'n_clicks'),
     # Datafile
     Input('upload-data', 'contents'),
     Input('datafile-type', 'value'),
     Input('parser-kwargs', 'value'),
     State('upload-data', 'filename'),
 )
-def cb_parse_data(random, content, filetype, parser_kws, filename):
-    ctx = dash.callback_context
-    if not ctx.triggered:
+def cb_parse_data(content, filetype, parser_kws, filename):
+    if filename is None:
         raise PreventUpdate
 
-    trigger = ctx.triggered[0]['prop_id'].split('.')[0]
+    if filename == 'random_data':
+        return [], False, content
 
-    # Random button
-    if trigger == 'random-data':
-        if random is None:
-            raise PreventUpdate
-        r = np.random.rand(990, 10) * 10
-        df = pd.DataFrame(data=r, columns=list('abcdefghij'))
-        df = df.round(2)
-        filename = 'random_data'
+    try:
+        parser_kws = parse_keywords(parser_kws)
+    except SyntaxError:
+        msg = "Keyword parsing error: Syntax: 'key1=..., key3=..., key3=...'"
+        return dbc.Alert(msg, color='danger'), True, None
 
-    # Upload button
-    else:
-        if content is None:
-            raise PreventUpdate
-        try:
-            parser_kws = parse_keywords(parser_kws)
-        except SyntaxError:
-            msg = "Keyword parsing error: Syntax: 'key1=..., key3=..., key3=...'"
-            return dbc.Alert(msg, color='danger'), True, None, filename
+    content_type, content_string = content.split(',')
+    decoded = base64.b64decode(content_string)
+    try:
+        df = parse_data(filename, filetype, decoded, parser_kws)
+    except Exception as e:
+        msg = f"Data parsing error: {repr(e)}"
+        return dbc.Alert(msg, color='danger'), False, None
 
-        content_type, content_string = content.split(',')
-        decoded = base64.b64decode(content_string)
-        try:
-            df = parse_data(filename, filetype, decoded, parser_kws)
-        except Exception as e:
-            msg = f"Data parsing error: {repr(e)}"
-            return dbc.Alert(msg, color='danger'), False, None, filename
-
-    df_dict = df.to_dict(orient='records')
-    return [], False, df_dict, filename
+    return [], False, df_dumps(df)
 
 
 @app.callback(
@@ -90,14 +101,15 @@ def cb_parse_data(random, content, filetype, parser_kws, filename):
     Input('df', 'data'),
     State('upload-data', 'filename'),
 )
-def cb_df_preview(df_records, filename):
-    if df_records is None:
+def cb_df_preview(df_jstr, filename):
+    if df_jstr is None:
         raise PreventUpdate
+    df = df_loads(df_jstr)
     preview = [
         html.B(filename),
         dash_table.DataTable(
-            data=df_records,
-            columns=[{'name': str(i), 'id': str(i)} for i in df_records[0].keys()],
+            data=df.to_dict('records'),
+            columns=[{'name': str(c), 'id': str(c)} for c in df.columns],
             page_size=10,
             style_table={'overflowX': 'auto'},
             style_cell={'textAlign': 'left'},
@@ -109,43 +121,9 @@ def cb_df_preview(df_records, filename):
     ]
     return preview
 
-@app.callback(
-    Output('add_to_config', 'disabled'),
-    Input('submit', 'disabled'),
-)
-def cb_enable_add_to_config(submit):
-    return submit
-
-
-@app.callback(
-    Output('config-preview', 'value'),
-    Input('add_to_config', 'n_clicks'),
-    Input('clear-config', 'n_clicks'),
-    Input('upload-config', 'contents'),
-    State('upload-config', 'filename'),
-    State('config-preview', 'value'),
-)
-def cb_config_preview(add, clear, content, filename, config):
-    if config is None:
-        config = ''
-    ctx = dash.callback_context
-    if not ctx.triggered:
-        raise PreventUpdate
-    trigger = ctx.triggered[0]['prop_id'].split('.')[0]
-    print(trigger)
-    if trigger == 'add_to_config':
-        return config + f"add {add}\n"
-    if trigger == 'clear-config':
-        return ''
-
-    content_type, content_string = content.split(',')
-    decoded = base64.b64decode(content_string)
-    s = decoded.decode('utf-8')
-    return s
-
 
 # ======================================================================
-# Function section
+# Function section and param validation
 # ======================================================================
 
 @app.callback(
@@ -160,7 +138,6 @@ def cb_params_header(funcname):
 
 @app.callback(
     Output('params-body', 'children'),
-    Output('submit', 'disabled'),
     Input('function-select', 'value'),
 )
 def cb_params_body(funcname):
@@ -168,19 +145,14 @@ def cb_params_body(funcname):
     Fill param fields according to selected function
     adds:
         - docstring section
-        - param:
-            - name
-            - docstring
-            - type
-            - input-field
-            - alert
+        - param with [name, docstring, type, input-field, alert]
     """
     if funcname is None:
         raise PreventUpdate
 
     func = SAQC_FUNCS[funcname]
     if func is None:
-        return dbc.Form(['No parameters to set']), False
+        return dbc.Form(['No parameters to set'])
 
     children = []
     param_forms = []
@@ -222,7 +194,7 @@ def cb_params_body(funcname):
                 dbc.Label(html.B(name), html_for=id, width=2),
                 dbc.Col(
                     [
-                        dbc.Input(type='text', value=default, id=id),
+                        dbc.Input(type='text', value=default, debounce=True, id=id),
                         dbc.FormText(hint, color='secondary')
                     ], width=10
                 ),
@@ -238,7 +210,7 @@ def cb_params_body(funcname):
 
     children.append(dbc.Form(param_forms))
 
-    return children, False
+    return children
 
 
 @app.callback(
@@ -294,26 +266,106 @@ def cb_param_validation(value, id, funcname):
     return bool(failed), children
 
 
+# ======================================================================
+# Config
+# ======================================================================
+
+@app.callback(
+    Output('add-to-config', 'disabled'),
+    Input({'group': 'param', 'id': ALL}, 'invalid'),
+    State('function-select', 'value'),
+)
+def cb_enable_add_to_config(invalids, funcname):
+    """ enable add-button if all param-inputs are valid. """
+    return any(invalids) or funcname is None
+
+
+@app.callback(
+    Output('func_repr', 'data'),
+    Input('add-to-config', 'n_clicks'),
+    State({'group': 'param', 'id': ALL}, 'id'),
+    State({'group': 'param', 'id': ALL}, 'value'),
+    State('function-select', 'value'),
+)
+def cb_add_to_config(add, param_ids, param_values, funcname):
+    if add is None:
+        raise PreventUpdate
+    fkws = dict()
+    for i, id_dict in enumerate(param_ids):
+        param_name = id_dict['id']
+        value = param_values[i]
+        fkws[param_name] = value
+    return get_func_repr(funcname, fkws, method=str)
+
+
+@app.callback(
+    Output('config-preview', 'value'),
+    Input('func_repr', 'data'),
+    Input('clear-config', 'n_clicks'),
+    Input('upload-config', 'contents'),
+    State('upload-config', 'filename'),
+    State('config-preview', 'value'),
+    State('function-select', 'value'),
+)
+def cb_config_preview(func_repr, clear, content, filename, config, funcname):
+    if config is None:
+        config = ''
+    ctx = dash.callback_context
+    if not ctx.triggered:
+        raise PreventUpdate
+    trigger = ctx.triggered[0]['prop_id'].split('.')[0]
+
+    if trigger == 'func_repr':
+        return config + func_repr
+
+    if trigger == 'clear-config':
+        return ''
+
+    content_type, content_string = content.split(',')
+    decoded = base64.b64decode(content_string)
+    return decoded.decode('utf-8')
+
+
+# ======================================================================
+# Preview / Plot
+# ======================================================================
+
+@app.callback(
+    Output('preview', 'disabled'),
+    Input({'group': 'param', 'id': ALL}, 'invalid'),
+    Input('df', 'data'),
+    State('function-select', 'value'),
+)
+def cb_enable_preview(invalids, data, fname):
+    """ enable preview-button if we have data and all param-inputs are valid. """
+    return any(invalids) or data is None or fname is None
+
+
 @app.callback(
     Output('submit-error', 'children'),
     Output('result', 'children'),
-    Input('submit', 'n_clicks'),
+    Input('preview', 'n_clicks'),
     State({'group': 'param', 'id': ALL}, 'id'),
     State({'group': 'param', 'id': ALL}, 'value'),
     State('function-select', 'value'),
     State('df', 'data'),
 )
-def cb_submit(submit_n, param_ids, param_values, funcname, df_records):
+def cb_submit(submit, param_ids, param_values, funcname, df_records):
     """
     parse all inputs.
     if successful calculate result TODO: text and plotted flags
     on parsing errors show an alert.
     """
-    if submit_n is None:
+    if not submit:
         return [], []
 
     kws_to_func = {}
     submit = True
+
+    if df_records is None:
+        alert = dbc.Alert("No data selected", color='warning'),
+        out = html.Pre('Failed')
+        return alert, out
 
     # parse values, all checks are already done, in the input-form-callback
     for i, id_dict in enumerate(param_ids):
@@ -340,10 +392,20 @@ def cb_submit(submit_n, param_ids, param_values, funcname, df_records):
     func = getattr(qc, saqcobj_funcname)
     field = 'a'
     result = func(field=field, **kws_to_func)
-    curr = f"qc.{saqcobj_funcname}("
-    for k, v in kws_to_func.items():
-        curr += f"{k}={v},"
-    curr += ')\n'
-    txt = curr
+    txt = get_func_repr(funcname, kws_to_func)
     print(result, type(result))
     return [], html.Pre(txt)
+
+
+def get_func_repr(fname, fkwargs: dict, ostr='qc', method=repr):
+    func = SAQC_FUNCS[fname]
+    saqcobj_funcname = f"{func._module}.{func.__name__}"
+    rpr = f"{saqcobj_funcname}("
+    if ostr:
+        rpr = f"{ostr}.{rpr}"
+    for k, v in fkwargs.items():
+        rpr += f"{k}={method(v)},"
+    if fkwargs:  # remove trailing comma
+        rpr = rpr[:-1]
+    rpr += ')\n'
+    return rpr
