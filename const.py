@@ -66,7 +66,7 @@ def test(
 
 
 SAQC_FUNCS = {
-    "None": None,  # default
+    # "None": None,  # default
     'flagRange': saqc.funcs.flagRange,
     'flagMAD': saqc.funcs.flagMAD,
     'flagDummy': saqc.funcs.flagDummy,

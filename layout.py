@@ -215,6 +215,8 @@ layout = dbc.Container(
     [
         dcc.Store(id="df"),
         dcc.Store(id="func_repr"),
+        dcc.Store(id="params_repr"),
+        dcc.Store(id="last_param"),
         html.H1("SaQC Configurator"),
         dbc.Card(
             [

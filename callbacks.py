@@ -29,15 +29,21 @@ from const import AGG_METHODS, SAQC_FUNCS, TYPE_MAPPING, IGNORED_PARAMS, PARSER_
 from app import app
 
 
-def df_dumps(df):
+def df_dumps(df: pd.DataFrame):
     if not df.index.name:
         df.index.name = 'index'
     df = df.reset_index()
-    return df.to_json(orient='split', double_precision=15),
+    dtypes = {str(k): str(v) for k, v in df.dtypes.to_dict().items()}
+    return df.to_json(orient='split', double_precision=15)
 
 
-def df_loads(s):
-    return pd.read_json(s[0], orient='split', precise_float=True)
+def df_loads(df_json):
+    # dtypes, df_json = df_json
+    df = pd.read_json(df_json, orient='split', precise_float=True, convert_dates=True)
+    # for c in df.columns:
+    #     df[c] = df[c].astype(dtypes[c])
+    return df
+
 
 
 # ======================================================================
@@ -101,15 +107,27 @@ def cb_parse_data(content, filetype, parser_kws, filename):
     Input('df', 'data'),
     State('upload-data', 'filename'),
 )
-def cb_df_preview(df_jstr, filename):
-    if df_jstr is None:
+def cb_df_preview(df_json, filename):
+    if df_json is None:
         raise PreventUpdate
-    df = df_loads(df_jstr)
-    preview = [
-        html.B(filename),
-        dash_table.DataTable(
+    df = df_loads(df_json)
+
+    columns = []
+    for c in df.columns:
+        dtype = df[c].dtype
+        if pd.api.types.is_datetime64_dtype(dtype):
+            t = 'datetime'
+        elif pd.api.types.is_numeric_dtype(dtype):
+            t = 'numeric'
+        else:
+            t = 'any'
+        d = dict(name=str(c), id=str(c), type=t)
+        print(d)
+        columns.append(d)
+
+    table = dash_table.DataTable(
             data=df.to_dict('records'),
-            columns=[{'name': str(c), 'id': str(c)} for c in df.columns],
+            columns=columns,
             page_size=10,
             style_table={'overflowX': 'auto'},
             style_cell={'textAlign': 'left'},
@@ -117,9 +135,11 @@ def cb_df_preview(df_jstr, filename):
                 'backgroundColor': 'white',
                 'fontWeight': 'bold'
             },
-        ),
-    ]
-    return preview
+    )
+    # table = dbc.Table.from_dataframe(
+    #     df, striped=False, bordered=True, hover=True, responsive=True
+    # )
+    return [html.B(filename), table]
 
 
 # ======================================================================
@@ -128,12 +148,15 @@ def cb_df_preview(df_jstr, filename):
 
 @app.callback(
     Output('params-header', 'children'),
+    Output('func_repr', 'data'),
     Input('function-select', 'value'),
 )
 def cb_params_header(funcname):
     if funcname is None:
         raise PreventUpdate
-    return html.H4(funcname)
+    func = SAQC_FUNCS[funcname]
+    func_repr = f"{func._module}.{func.__name__}"
+    return html.H4(funcname), func_repr
 
 
 @app.callback(
@@ -266,9 +289,24 @@ def cb_param_validation(value, id, funcname):
     return bool(failed), children
 
 
+@app.callback(
+    Output('params_repr', 'data'),
+    Input({'group': 'param', 'id': ALL}, 'value'),
+    State({'group': 'param', 'id': ALL}, 'id'),
+    State('function-select', 'value'),
+)
+def cb_param_repr(param_values, param_ids, funcname):
+    kws = dict()
+    for i, id_dict in enumerate(param_ids):
+        param_name = id_dict['id']
+        value = param_values[i]
+        kws[param_name] = value
+    return kws
+
 # ======================================================================
 # Config
 # ======================================================================
+
 
 @app.callback(
     Output('add-to-config', 'disabled'),
@@ -281,33 +319,16 @@ def cb_enable_add_to_config(invalids, funcname):
 
 
 @app.callback(
-    Output('func_repr', 'data'),
-    Input('add-to-config', 'n_clicks'),
-    State({'group': 'param', 'id': ALL}, 'id'),
-    State({'group': 'param', 'id': ALL}, 'value'),
-    State('function-select', 'value'),
-)
-def cb_add_to_config(add, param_ids, param_values, funcname):
-    if add is None:
-        raise PreventUpdate
-    fkws = dict()
-    for i, id_dict in enumerate(param_ids):
-        param_name = id_dict['id']
-        value = param_values[i]
-        fkws[param_name] = value
-    return get_func_repr(funcname, fkws, method=str)
-
-
-@app.callback(
     Output('config-preview', 'value'),
-    Input('func_repr', 'data'),
+    Input('add-to-config', 'n_clicks'),
     Input('clear-config', 'n_clicks'),
     Input('upload-config', 'contents'),
-    State('upload-config', 'filename'),
     State('config-preview', 'value'),
-    State('function-select', 'value'),
+    State('func_repr', 'data'),
+    State('params_repr', 'data'),
+
 )
-def cb_config_preview(func_repr, clear, content, filename, config, funcname):
+def cb_config_preview(add, clear, content, config, func_repr, params_repr):
     if config is None:
         config = ''
     ctx = dash.callback_context
@@ -315,8 +336,10 @@ def cb_config_preview(func_repr, clear, content, filename, config, funcname):
         raise PreventUpdate
     trigger = ctx.triggered[0]['prop_id'].split('.')[0]
 
-    if trigger == 'func_repr':
-        return config + func_repr
+    if trigger == 'add-to-config':
+        paramstr = ', '.join([f"{k}={v}" for k, v in params_repr.items()])
+        line = f"qc.{func_repr}({paramstr})"
+        return config + line + '\n'
 
     if trigger == 'clear-config':
         return ''
@@ -350,7 +373,7 @@ def cb_enable_preview(invalids, data, fname):
     State('function-select', 'value'),
     State('df', 'data'),
 )
-def cb_submit(submit, param_ids, param_values, funcname, df_records):
+def cb_submit(submit, param_ids, param_values, funcname, df_json):
     """
     parse all inputs.
     if successful calculate result TODO: text and plotted flags
@@ -362,7 +385,7 @@ def cb_submit(submit, param_ids, param_values, funcname, df_records):
     kws_to_func = {}
     submit = True
 
-    if df_records is None:
+    if df_json is None:
         alert = dbc.Alert("No data selected", color='warning'),
         out = html.Pre('Failed')
         return alert, out
@@ -385,27 +408,14 @@ def cb_submit(submit, param_ids, param_values, funcname, df_records):
     for k, v in kws_to_func.items():
         txt += f"{k}={repr(v)} ({type(v).__name__})\n"
 
-    df = pd.DataFrame.from_records(df_records)
+    df = df_loads(df_json)
     qc = saqc.SaQC(df)
     func = SAQC_FUNCS[funcname]
     saqcobj_funcname = f"{func._module}.{func.__name__}"
     func = getattr(qc, saqcobj_funcname)
     field = 'a'
     result = func(field=field, **kws_to_func)
-    txt = get_func_repr(funcname, kws_to_func)
     print(result, type(result))
     return [], html.Pre(txt)
 
 
-def get_func_repr(fname, fkwargs: dict, ostr='qc', method=repr):
-    func = SAQC_FUNCS[fname]
-    saqcobj_funcname = f"{func._module}.{func.__name__}"
-    rpr = f"{saqcobj_funcname}("
-    if ostr:
-        rpr = f"{ostr}.{rpr}"
-    for k, v in fkwargs.items():
-        rpr += f"{k}={method(v)},"
-    if fkwargs:  # remove trailing comma
-        rpr = rpr[:-1]
-    rpr += ')\n'
-    return rpr
