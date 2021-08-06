@@ -1,18 +1,35 @@
 #!/usr/bin/env python
 import typing
-import base64
-import datetime
+import litereval
+import pandas as pd
 import io
-
 import dash_bootstrap_components as dbc
+
+
+# ======================================================================
+# Cache
+# ======================================================================
+
+def cache_set(session_id, key, value):
+    from app import cache  # late import to avoid circles
+    ca = cache.get(session_id)
+    if ca is None:
+        ca = dict()
+    ca[key] = value
+    cache.set(session_id, ca)
+
+
+def cache_get(session_id, key, default=None):
+    from app import cache  # late import to avoid circles
+    ca: dict = cache.get(session_id)
+    if ca is None:
+        return default
+    return ca.get(key, default)
 
 
 # ===========================================================================
 # Parsing
 # ===========================================================================
-import litereval
-import pandas as pd
-
 
 def literal_eval_extended(node_or_string: str):
     """
@@ -116,10 +133,10 @@ def parse_data(filename: str, file_type, content, parse_kws=None):
     else:
         raise ValueError('Unknown filetype')
 
+
 # ===========================================================================
 # html creation helper
 # ===========================================================================
-
 
 def FormGroupInput(text, id, type="text", widths=(2, 10), row=True, raw=False, **kws):
     if type in ['t', 'txt', 'text']:

@@ -26,36 +26,19 @@ import docstring_parser as docparse
 import saqc
 from helper import parse_data, type_repr, literal_eval_extended, parse_keywords
 from const import AGG_METHODS, SAQC_FUNCS, TYPE_MAPPING, IGNORED_PARAMS, PARSER_MAPPING
-from app import app
-
-
-def df_dumps(df: pd.DataFrame):
-    if not df.index.name:
-        df.index.name = 'index'
-    df = df.reset_index()
-    dtypes = {str(k): str(v) for k, v in df.dtypes.to_dict().items()}
-    return df.to_json(orient='split', double_precision=15)
-
-
-def df_loads(df_json):
-    # dtypes, df_json = df_json
-    df = pd.read_json(df_json, orient='split', precise_float=True, convert_dates=True)
-    # for c in df.columns:
-    #     df[c] = df[c].astype(dtypes[c])
-    return df
-
-
+from app import app, cache
+import flask_caching
 
 # ======================================================================
 # Input section
 # ======================================================================
 
 @app.callback(
-    Output('upload-data', 'contents'),
     Output('upload-data', 'filename'),
     Input('random-data', 'n_clicks'),
+    State('session-id', 'data'),
 )
-def random_to_content(n):
+def cb_click_to_random(n, session_id):
     if n is None:
         raise PreventUpdate
     rows = 990
@@ -64,32 +47,33 @@ def random_to_content(n):
     i = pd.date_range(start=start, periods=rows, freq='10min')
     df = pd.DataFrame(index=i, data=r, columns=list('abcdefghij'))
     df = df.round(2)
-
-    return df_dumps(df), 'random_data'
+    cache_set(session_id, 'df', df)
+    return 'random_data'
 
 
 @app.callback(
     Output('upload-error', 'children'),
     Output('parser-kwargs', 'invalid'),
-    Output('df', 'data'),
+    Output('df-exist', 'data'),
     # Datafile
+    Input('upload-data', 'filename'),
     Input('upload-data', 'contents'),
     Input('datafile-type', 'value'),
     Input('parser-kwargs', 'value'),
-    State('upload-data', 'filename'),
+    State('session-id', 'data'),
 )
-def cb_parse_data(content, filetype, parser_kws, filename):
+def cb_parse_data(filename, content, filetype, parser_kws, session_id):
     if filename is None:
         raise PreventUpdate
 
     if filename == 'random_data':
-        return [], False, content
+        return [], False, True
 
     try:
         parser_kws = parse_keywords(parser_kws)
     except SyntaxError:
         msg = "Keyword parsing error: Syntax: 'key1=..., key3=..., key3=...'"
-        return dbc.Alert(msg, color='danger'), True, None
+        return dbc.Alert(msg, color='danger'), True, False
 
     content_type, content_string = content.split(',')
     decoded = base64.b64decode(content_string)
@@ -97,20 +81,25 @@ def cb_parse_data(content, filetype, parser_kws, filename):
         df = parse_data(filename, filetype, decoded, parser_kws)
     except Exception as e:
         msg = f"Data parsing error: {repr(e)}"
-        return dbc.Alert(msg, color='danger'), False, None
+        return dbc.Alert(msg, color='danger'), False, False
 
-    return [], False, df_dumps(df)
+    cache_set(session_id, 'df', df)
+    return [], False, True
 
 
 @app.callback(
     Output('df-preview', 'children'),
-    Input('df', 'data'),
+    Input('df-exist', 'data'),
     State('upload-data', 'filename'),
+    State('session-id', 'data'),
 )
-def cb_df_preview(df_json, filename):
-    if df_json is None:
+def cb_df_preview(df_exist, filename, session_id):
+    if not df_exist or filename is None:
         raise PreventUpdate
-    df = df_loads(df_json)
+
+    df = cache_get(session_id, 'df')
+    if df is None:
+        raise AssertionError("DataFrame is not present in cache")
 
     columns = []
     for c in df.columns:
@@ -126,15 +115,15 @@ def cb_df_preview(df_json, filename):
         columns.append(d)
 
     table = dash_table.DataTable(
-            data=df.to_dict('records'),
-            columns=columns,
-            page_size=10,
-            style_table={'overflowX': 'auto'},
-            style_cell={'textAlign': 'left'},
-            style_header={
-                'backgroundColor': 'white',
-                'fontWeight': 'bold'
-            },
+        data=df.to_dict('records'),
+        columns=columns,
+        page_size=10,
+        style_table={'overflowX': 'auto'},
+        style_cell={'textAlign': 'left'},
+        style_header={
+            'backgroundColor': 'white',
+            'fontWeight': 'bold'
+        },
     )
     # table = dbc.Table.from_dataframe(
     #     df, striped=False, bordered=True, hover=True, responsive=True
@@ -148,15 +137,15 @@ def cb_df_preview(df_json, filename):
 
 @app.callback(
     Output('params-header', 'children'),
-    Output('func_repr', 'data'),
     Input('function-select', 'value'),
+    Input('session-id', 'data')
 )
-def cb_params_header(funcname):
+def cb_params_header(funcname, session_id):
     if funcname is None:
         raise PreventUpdate
     func = SAQC_FUNCS[funcname]
-    func_repr = f"{func._module}.{func.__name__}"
-    return html.H4(funcname), func_repr
+    cache_set(session_id, 'func', func)
+    return html.H4(funcname)
 
 
 @app.callback(
@@ -241,9 +230,9 @@ def cb_params_body(funcname):
     Output({'group': 'param-validation', 'id': MATCH}, 'children'),
     Input({'group': 'param', 'id': MATCH}, 'value'),
     State({'group': 'param', 'id': MATCH}, 'id'),
-    State('function-select', 'value'),
+    State('session-id', 'data')
 )
-def cb_param_validation(value, id, funcname):
+def cb_param_validation(value, id, session_id):
     """
     validated param input and show an alert if validation fails
     """
@@ -259,7 +248,8 @@ def cb_param_validation(value, id, funcname):
 
     else:
         # prepare type check
-        param = inspect.signature(SAQC_FUNCS[funcname]).parameters[param_name]
+        func = cache_get(session_id, 'func')
+        param = inspect.signature(func).parameters[param_name]
         a = param.annotation
         a = TYPE_MAPPING.get(a, a)
         # sometimes the written typehints in saqc aren't explicit about None
@@ -267,6 +257,7 @@ def cb_param_validation(value, id, funcname):
             a = typing.Union[a, None]
 
         # parse and check
+        parsed = NotImplemented
         try:
             parsed = literal_eval_extended(value)
             try:
@@ -278,6 +269,12 @@ def cb_param_validation(value, id, funcname):
         except ValueError:
             failed, msg = 'danger', f"Invalid value."
 
+        # store result in cache
+        if parsed is not NotImplemented:
+            params = cache_get(session_id, 'params', dict())
+            params[param_name] = parsed
+            cache_set(session_id, 'params', params)
+
     if failed == 'danger':
         children = dbc.Alert([html.B('Error: '), msg], color=failed)
     elif failed == 'warning':
@@ -288,20 +285,6 @@ def cb_param_validation(value, id, funcname):
 
     return bool(failed), children
 
-
-@app.callback(
-    Output('params_repr', 'data'),
-    Input({'group': 'param', 'id': ALL}, 'value'),
-    State({'group': 'param', 'id': ALL}, 'id'),
-    State('function-select', 'value'),
-)
-def cb_param_repr(param_values, param_ids, funcname):
-    kws = dict()
-    for i, id_dict in enumerate(param_ids):
-        param_name = id_dict['id']
-        value = param_values[i]
-        kws[param_name] = value
-    return kws
 
 # ======================================================================
 # Config
@@ -324,11 +307,9 @@ def cb_enable_add_to_config(invalids, funcname):
     Input('clear-config', 'n_clicks'),
     Input('upload-config', 'contents'),
     State('config-preview', 'value'),
-    State('func_repr', 'data'),
-    State('params_repr', 'data'),
-
+    State('session-id', 'data'),
 )
-def cb_config_preview(add, clear, content, config, func_repr, params_repr):
+def cb_config_preview(add, clear, content, config, session_id):
     if config is None:
         config = ''
     ctx = dash.callback_context
@@ -337,7 +318,10 @@ def cb_config_preview(add, clear, content, config, func_repr, params_repr):
     trigger = ctx.triggered[0]['prop_id'].split('.')[0]
 
     if trigger == 'add-to-config':
-        paramstr = ', '.join([f"{k}={v}" for k, v in params_repr.items()])
+        func = cache_get(session_id, 'func')
+        func_repr = f"{func._module}.{func.__name__}"
+        params = cache_get(session_id, 'params')
+        paramstr = ', '.join([f"{k}={repr(v)}" for k, v in params.items()])
         line = f"qc.{func_repr}({paramstr})"
         return config + line + '\n'
 
@@ -356,66 +340,59 @@ def cb_config_preview(add, clear, content, config, func_repr, params_repr):
 @app.callback(
     Output('preview', 'disabled'),
     Input({'group': 'param', 'id': ALL}, 'invalid'),
-    Input('df', 'data'),
+    Input('df-exist', 'data'),
     State('function-select', 'value'),
 )
-def cb_enable_preview(invalids, data, fname):
+def cb_enable_preview(invalids, df_exist, fname):
     """ enable preview-button if we have data and all param-inputs are valid. """
-    return any(invalids) or data is None or fname is None
+    return any(invalids) or not df_exist or fname is None
 
 
 @app.callback(
     Output('submit-error', 'children'),
     Output('result', 'children'),
     Input('preview', 'n_clicks'),
-    State({'group': 'param', 'id': ALL}, 'id'),
-    State({'group': 'param', 'id': ALL}, 'value'),
-    State('function-select', 'value'),
-    State('df', 'data'),
+    State('session-id', 'data'),
 )
-def cb_submit(submit, param_ids, param_values, funcname, df_json):
+def cb_submit(clicked, session_id):
     """
     parse all inputs.
     if successful calculate result TODO: text and plotted flags
     on parsing errors show an alert.
     """
-    if not submit:
-        return [], []
+    if not clicked:
+        raise PreventUpdate
 
-    kws_to_func = {}
-    submit = True
-
-    if df_json is None:
-        alert = dbc.Alert("No data selected", color='warning'),
+    if cache_get(session_id, 'df', None) is None:
+        alert = dbc.Alert("No data. Please upload or generate data.", color='warning')
         out = html.Pre('Failed')
         return alert, out
 
-    # parse values, all checks are already done, in the input-form-callback
-    for i, id_dict in enumerate(param_ids):
-        param_name = id_dict['id']
-        value = param_values[i]
-        try:
-            kws_to_func[param_name] = literal_eval_extended(value)
-        except (SyntaxError, ValueError):
-            submit = False
+    func = cache_get(session_id, 'func')
+    params = cache_get(session_id, 'params')
 
-    if not submit:
-        alert = dbc.Alert("Errors or missing fields above.", color='danger'),
-        out = html.Pre('Failed')
-        return alert, out
+    func_repr = f"{func._module}.{func.__name__}"
+    paramstr = ', '.join([f"{k}={repr(v)}" for k, v in params.items()])
+    txt = f"call `qc.{func_repr}({paramstr})`\n"
 
-    txt = 'Great Success\n=============\n'
-    for k, v in kws_to_func.items():
+    txt += '\ndetailed params:\n-----------------\n'
+    for k, v in params.items():
         txt += f"{k}={repr(v)} ({type(v).__name__})\n"
 
-    df = df_loads(df_json)
-    qc = saqc.SaQC(df)
-    func = SAQC_FUNCS[funcname]
-    saqcobj_funcname = f"{func._module}.{func.__name__}"
-    func = getattr(qc, saqcobj_funcname)
-    field = 'a'
-    result = func(field=field, **kws_to_func)
-    print(result, type(result))
-    return [], html.Pre(txt)
+    df = cache_get(session_id, 'df')
+    if df is None:
+        raise AssertionError("DataFrame is not present in cache")
 
+    try:
+        qc = saqc.SaQC(df)
+        func = getattr(qc, func_repr)
+        field = 'a'
+        result = func(field=field, **params)
+    except Exception as e:
+        alert = dbc.Alert(repr(e), color='danger')
+        txt = 'Errors during ' + txt
+    else:
+        alert = []
+        txt = 'Great Success\n=============\n' + txt
 
+    return alert, html.Pre(txt)

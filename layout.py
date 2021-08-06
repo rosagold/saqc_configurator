@@ -41,10 +41,7 @@ random_data_section = dbc.Form(
 data_input_section = dbc.Form(
     [
         # Data        [Upload File]  [mean|v]
-        # Header      [_________]
-        # Index       [_________]
-        # DataCol     [_________]
-        # Parsing kw  [_________]
+        # kwargs      [_________]
         dbc.FormGroup(
             [
                 dbc.Label("Data", width=2),
@@ -64,9 +61,6 @@ data_input_section = dbc.Form(
             row=True,
             inline=True,
         ),
-        # FormGroupInput("Header row", value=0, id=f"header-row"),
-        # FormGroupInput("Index column", value=0, id="index-column"),
-        # FormGroupInput("Data column", value=1, id="data-column"),
         dbc.FormGroup(
             [
                 dbc.Label("Parser kwargs", html_for="parser-kwargs", width=2),
@@ -89,7 +83,7 @@ data_input_section = dbc.Form(
             ],
             row=True,
         ),
-        html.Div([], id="upload-error"),  # TODO
+        html.Div([], id="upload-error")
     ]
 )
 
@@ -154,6 +148,11 @@ function_section = html.Div(
                 ),
             ]
         ),
+        FormGroupInput(
+            "Field - TODO",
+            placeholder='a column from data',
+            id="data-column"
+        ),
         DivRow(
             [
                 "function: ",
@@ -213,10 +212,6 @@ function_section = html.Div(
 
 layout = dbc.Container(
     [
-        dcc.Store(id="df"),
-        dcc.Store(id="func_repr"),
-        dcc.Store(id="params_repr"),
-        dcc.Store(id="last_param"),
         html.H1("SaQC Configurator"),
         dbc.Card(
             [
