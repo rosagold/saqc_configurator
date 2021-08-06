@@ -233,5 +233,8 @@ layout = dbc.Container(
                 dbc.CardBody([function_section]),
             ]
         ),
+        dbc.Card([
+            dbc.CardBody([], id='plot'),
+        ]),
     ],
 )

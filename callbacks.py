@@ -18,16 +18,18 @@ import dash_html_components as html
 from dash.exceptions import PreventUpdate
 from dash.dependencies import Input, Output, State, ALL, MATCH
 import dash_table
-import litereval
 import plotly.express as px
+
 
 import docstring_parser as docparse
 
 import saqc
-from helper import parse_data, type_repr, literal_eval_extended, parse_keywords
+from helper import (
+    parse_data, type_repr, literal_eval_extended, parse_keywords, cache_get, cache_set,
+)
 from const import AGG_METHODS, SAQC_FUNCS, TYPE_MAPPING, IGNORED_PARAMS, PARSER_MAPPING
-from app import app, cache
-import flask_caching
+from app import app
+
 
 # ======================================================================
 # Input section
@@ -111,7 +113,6 @@ def cb_df_preview(df_exist, filename, session_id):
         else:
             t = 'any'
         d = dict(name=str(c), id=str(c), type=t)
-        print(d)
         columns.append(d)
 
     table = dash_table.DataTable(
@@ -351,6 +352,7 @@ def cb_enable_preview(invalids, df_exist, fname):
 @app.callback(
     Output('submit-error', 'children'),
     Output('result', 'children'),
+    Output('plot', 'children'),
     Input('preview', 'n_clicks'),
     State('session-id', 'data'),
 )
@@ -366,7 +368,7 @@ def cb_submit(clicked, session_id):
     if cache_get(session_id, 'df', None) is None:
         alert = dbc.Alert("No data. Please upload or generate data.", color='warning')
         out = html.Pre('Failed')
-        return alert, out
+        return alert, out, []
 
     func = cache_get(session_id, 'func')
     params = cache_get(session_id, 'params')
@@ -383,16 +385,28 @@ def cb_submit(clicked, session_id):
     if df is None:
         raise AssertionError("DataFrame is not present in cache")
 
+    alert, plot = [], []
     try:
         qc = saqc.SaQC(df)
         func = getattr(qc, func_repr)
         field = 'a'
+
+        # plot data
+        fig = px.line(df, x=df.index, y=field)
         result = func(field=field, **params)
+
+        # plot flags
+        flags = result.flags[field]
+        flagged = flags > saqc.UNFLAGGED
+        x = flags[flagged].index
+        y = df.loc[flagged, field]
+        fig.add_scatter(x=x, y=y, mode="markers",)
+
+        plot = dcc.Graph(figure=fig)
     except Exception as e:
         alert = dbc.Alert(repr(e), color='danger')
         txt = 'Errors during ' + txt
     else:
-        alert = []
         txt = 'Great Success\n=============\n' + txt
 
-    return alert, html.Pre(txt)
+    return alert, html.Pre(txt), plot
