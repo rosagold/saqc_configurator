@@ -20,7 +20,6 @@ from dash.dependencies import Input, Output, State, ALL, MATCH
 import dash_table
 import plotly.express as px
 
-
 import docstring_parser as docparse
 
 import saqc
@@ -102,7 +101,7 @@ def cb_parse_data(filename, content, filetype, parser_kws, session_id):
     State('session-id', 'data'),
 )
 def cb_df_preview(df_present, filename, session_id):
-    # todo: same as this : plot
+    # todo: a callback same as this for plot
     if not df_present or filename is None:
         raise PreventUpdate
 
@@ -111,15 +110,12 @@ def cb_df_preview(df_present, filename, session_id):
 
     columns = []
     for c in df.columns:
-        dtype = df[c].dtype
+        dtype, t = df[c].dtype, 'any'
         if pd.api.types.is_datetime64_dtype(dtype):
             t = 'datetime'
         elif pd.api.types.is_numeric_dtype(dtype):
             t = 'numeric'
-        else:
-            t = 'any'
-        d = dict(name=str(c), id=str(c), type=t)
-        columns.append(d)
+        columns.append(dict(name=str(c), id=str(c), type=t))
 
     table = dash_table.DataTable(
         data=df.to_dict('records'),
@@ -127,14 +123,8 @@ def cb_df_preview(df_present, filename, session_id):
         page_size=10,
         style_table={'overflowX': 'auto'},
         style_cell={'textAlign': 'left'},
-        style_header={
-            'backgroundColor': 'white',
-            'fontWeight': 'bold'
-        },
+        style_header={'backgroundColor': 'white', 'fontWeight': 'bold'},
     )
-    # table = dbc.Table.from_dataframe(
-    #     df, striped=False, bordered=True, hover=True, responsive=True
-    # )
     return [html.B(filename), table]
 
 
@@ -154,6 +144,27 @@ def cb_params_header(funcname, session_id):
     func = SAQC_FUNCS[funcname]
     cache_set(session_id, 'func', func)
     return True, html.H4(funcname)
+
+
+def _get_default_for_field(default, session_id):
+    if default is None:
+        df = cache_get(session_id, 'df', pd.DataFrame(columns=[None]))
+        default = df.columns[0]  # we don't allow empty DataFrames
+        if default is not None:
+            default = repr(default)
+    return default
+
+
+def _get_docstring_description(docstr):
+    dc = docparse
+    children = []
+    for o in [docstr.short_description, docstr.long_description, *docstr.meta]:
+        if o is None or isinstance(o, (dc.DocstringParam, dc.DocstringReturns)):
+            continue
+        if not isinstance(o, str):
+            o = f"#### {o.args[0].capitalize()}\n{o.description}"
+        children.append(dcc.Markdown(o))
+    return children
 
 
 @app.callback(
@@ -177,61 +188,44 @@ def cb_params_body(func_selected, default_field, session_id):
     param_forms = []
 
     # docstring
-    docstr = docparse.parse(func.__doc__)
-    for o in [docstr.short_description, docstr.long_description, *docstr.meta]:
-        if o is None or isinstance(o, (
-                docparse.DocstringParam, docparse.DocstringReturns)):
-            continue
-        if not isinstance(o, str):
-            o = f"#### {o.args[0].capitalize()}\n{o.description}"
-        children.append(dcc.Markdown(o))
+    docstr_obj = docparse.parse(func.__doc__)
+    children += _get_docstring_description(docstr_obj)
+    param_descriptions = {p.arg_name: p.description for p in docstr_obj.params}
 
     # dynamically add param input fields
-    params_docstr = {p.arg_name: p.description for p in docstr.params}
-    params = inspect.signature(func).parameters
-    pnames = [p for p in params if p not in IGNORED_PARAMS]
-    for name in pnames:
-        p = params[name]
+    for name, param in inspect.signature(func).parameters.items():
+        if name in IGNORED_PARAMS:
+            continue
 
-        if p.default == inspect.Parameter.empty:
-            default = None
-        else:
-            default = repr(p.default)
+        default = None
+        if param.default != inspect.Parameter.empty:
+            default = repr(param.default)
 
-        type_ = p.annotation
-        hint = type_repr(type_)
-        if type_ is inspect.Parameter.empty:
-            type_, hint = None, ''
+        hint = type_repr(param.annotation)
+        if param.annotation is inspect.Parameter.empty:
+            hint = ''
 
-        docu = dcc.Markdown(params_docstr.get(name, []))
+        description = dcc.Markdown(param_descriptions.get(name, []))
 
+        # special param `field`
         if name == 'field':
-            default = default_field
-            if default is None:
-                df = cache_get(session_id, 'df', pd.DataFrame(columns=[None]))
-                default = df.columns[0]  # we don't allow empty DataFrames
-                if default is not None:
-                    default = repr(default)
-            docu = "A column name holding the data."
+            default = _get_default_for_field(default_field, session_id)
+            description = "A column name holding the data."
 
-        # using a dict as ``id`` makes pattern matching callbacks possible
+        # using a dict as `id` makes pattern matching callbacks possible
         id = {"group": "param", "id": name}
-        form = dbc.FormGroup(
-            [
-                dbc.Label(html.B(name), html_for=id, width=2),
-                dbc.Col(
-                    [
-                        dbc.Input(type='text', value=default, debounce=True, id=id),
-                        dbc.FormText(hint, color='secondary')
-                    ], width=10
-                ),
-                dbc.Col(docu, width=12),
+        id_valid = {"group": "param-validation", "id": name}
 
-                # filled by cb_param_validation()
-                dbc.Col([], width=12, id={"group": "param-validation", "id": name}),
-            ],
-            row=True
-        )
+        # html creation
+        name = html.B(name)
+        inp = dbc.Input(type='text', value=default, debounce=True, id=id)
+        hint = dbc.FormText(hint, color='secondary')
+        form = dbc.FormGroup([
+            dbc.Label(name, html_for=id, width=2),
+            dbc.Col([inp, hint], width=10),
+            dbc.Col(description, width=12),
+            dbc.Col([], width=12, id=id_valid),  # filled by cb_param_validation()
+        ], row=True)
         param_forms.append(html.Hr())
         param_forms.append(form)
 
@@ -251,31 +245,31 @@ def cb_param_validation(value, param_id, session_id):
     """
     validated param input and show an alert if validation fails
     """
-    param_name = param_id['id']
-    failed, msg = False, ""
-
     if value is None:
         return True, []
 
     # Empty value after user already was in the input form
     if value == "":
-        failed, msg = 'danger', f"Missing value."
+        return True, dbc.Alert([html.B('Error: '), 'Missing value'], color='danger')
 
+    func = cache_get(session_id, 'func')
+    df = cache_get(session_id, 'df', None)
+
+    param_name = param_id['id']
+    param = inspect.signature(func).parameters[param_name]
+
+    # sometimes the written typehints in saqc aren't explicit about None
+    annotation = param.annotation
+    if param.default is None:
+        annotation = typing.Union[annotation, None]
+
+    try:
+        parsed = param_parse(value)
+        param_typecheck(param_name, parsed, annotation, df)
+    except (TypeError, ValueError) as e:
+        failed, msg = e.args
     else:
-        # prepare type check
-        func = cache_get(session_id, 'func')
-        df = cache_get(session_id, 'df', None)
-        param = inspect.signature(func).parameters[param_name]
-        a = param.annotation
-        # sometimes the written typehints in saqc aren't explicit about None
-        if param.default is None:
-            a = typing.Union[a, None]
-
-        try:
-            parsed = param_parse(value)
-            param_typecheck(param_name, parsed, a, df)
-        except (TypeError, ValueError) as e:
-            failed, msg = e.args
+        failed, msg = False, ""
 
     if failed == 'danger':
         children = dbc.Alert([html.B('Error: '), msg], color=failed)
@@ -299,21 +293,18 @@ def cb_param_validation(value, param_id, session_id):
     State('session-id', 'data'),
 )
 def cb_parsing_done_and_default_field(
-        invalids, values, param_ids, default_field, func_seleced, session_id
+        invalids, values, param_ids, default_field, func_selected, session_id
 ):
-    if not func_seleced:
+    if not func_selected:
         raise PreventUpdate
 
-    # set default value for field
-    default = default_field
-    for i, param_id in enumerate(param_ids):
-        name = param_id['id']
-        value = values[i]
-        valid = not invalids[i]
-        if name == 'field':
-            if valid:
-                default = value
-            break
+    # set the default value for `field` (which is always present)
+    # to the current value, unless the value is not valid
+    i = param_ids.index({'group': 'param', 'id': 'field'})
+    if invalids[i]:
+        default = default_field
+    else:
+        default = values[i]
 
     if any(invalids):
         return False, default
@@ -332,6 +323,7 @@ def cb_parsing_done_and_default_field(
     cache_set(session_id, 'params', params)
 
     return True, default
+
 
 # ======================================================================
 # Config
@@ -401,7 +393,7 @@ def cb_enable_preview(parsed, df_present):
 def cb_preview(clicked, session_id):
     """
     parse all inputs.
-    if successful calculate result TODO: text and plotted flags
+    if successful calculate result
     on parsing errors show an alert.
     """
     if not clicked:
@@ -433,7 +425,7 @@ def cb_preview(clicked, session_id):
         flagged = flags > saqc.UNFLAGGED
         x = flags[flagged].index
         y = df.loc[flagged, field]
-        fig.add_scatter(x=x, y=y, mode="markers",)
+        fig.add_scatter(x=x, y=y, mode="markers", )
 
         plot = dcc.Graph(figure=fig)
     except Exception as e:
