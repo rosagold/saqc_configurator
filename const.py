@@ -13,7 +13,7 @@ from saqc.lib.types import (
     IntegerWindow,
 )
 
-IGNORED_PARAMS = ['data', 'flags', 'field', 'kwargs']
+IGNORED_PARAMS = ['data', 'flags', 'kwargs']
 AGG_METHODS = ['mean', 'min', 'max', 'sum']  # first is default
 
 RANDOM_TYPES = [
@@ -66,7 +66,6 @@ def test(
 
 
 SAQC_FUNCS = {
-    # "None": None,  # default
     'flagRange': saqc.funcs.flagRange,
     'flagMAD': saqc.funcs.flagMAD,
     'flagDummy': saqc.funcs.flagDummy,

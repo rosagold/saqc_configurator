@@ -14,14 +14,18 @@ def serve_layout():
     layout.session_id = session_id
 
     outlay = html.Div([
-        dcc.Store(id="df-exist", data=False),
         dcc.Store(id='session-id', data=session_id),
+        dcc.Store(id="df-present", data=False),
+        dcc.Store(id="func-selected", data=False),
+        dcc.Store(id="params-parsed", data=False),
+        dcc.Store(id='default-field', data=None),
         layout
     ])
     return outlay
 
 
 app = dash.Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP])
+# app.config.suppress_callback_exceptions = True
 cache = Cache(app.server, config={
     'CACHE_TYPE': 'filesystem',
     'CACHE_DIR': '.server_cache'

@@ -4,6 +4,9 @@ import litereval
 import pandas as pd
 import io
 import dash_bootstrap_components as dbc
+import saqc.lib.types
+from const import TYPE_MAPPING
+import typeguard
 
 
 # ======================================================================
@@ -12,19 +15,19 @@ import dash_bootstrap_components as dbc
 
 def cache_set(session_id, key, value):
     from app import cache  # late import to avoid circles
-    ca = cache.get(session_id)
-    if ca is None:
-        ca = dict()
+    ca = cache.get(session_id) or dict()
     ca[key] = value
     cache.set(session_id, ca)
 
 
-def cache_get(session_id, key, default=None):
+def cache_get(session_id, key, *args):
     from app import cache  # late import to avoid circles
-    ca: dict = cache.get(session_id)
-    if ca is None:
-        return default
-    return ca.get(key, default)
+    ca = cache.get(session_id) or dict()
+    if len(args) == 0:
+        return ca[key]  # raise KeyError
+    if len(args) == 1:
+        return ca.get(key, args[0])
+    raise TypeError(f"cache_get() expected at most 3 arguments, got {2 + len(args)}")
 
 
 # ===========================================================================
@@ -104,6 +107,12 @@ def type_repr(t, pretty=True):
     return s
 
 
+def saqc_func_repr(func, kws):
+    f = f"{func._module}.{func.__name__}"
+    p = ', '.join([f"{k}={repr(v)}" for k, v in kws.items()])
+    return f"{f}({p})"
+
+
 def parse_keywords(kwstr):
     try:
         parsed = litereval.litereval('{' + kwstr + '}')
@@ -167,3 +176,60 @@ def DivRow(children, widths=(2, 10)):
         ],
         row=True,
     ))
+
+
+def param_parse(value: str):
+    """
+    Raises
+    ======
+    ValueError: if parsing fails
+    """
+    try:
+        return literal_eval_extended(value)
+    except (TypeError, SyntaxError, IndexError):
+        raise ValueError('danger', f"Invalid syntax")
+    except ValueError:
+        raise ValueError('danger', f"Invalid value")
+
+
+def param_typecheck(name, value, expected_type, df=None):
+    """
+    Raises
+    ======
+    TypeError: if simple type-check fails
+    ValueError: if advanced type-check fails
+    """
+    simple = TYPE_MAPPING.get(expected_type, expected_type)
+    try:
+        typeguard.check_type(name, value, simple)
+    except TypeError as e:
+        raise TypeError('warning', f"TypeCheckError: {e}")
+
+    # extras
+    if expected_type == saqc.lib.types.ColumnName:
+        if df is not None and value not in df.columns:
+            raise ValueError(
+                'warning',
+                f"ValueError: column '{value}' is not present in data."
+            )
+
+    elif (
+            expected_type == saqc.lib.types.PositiveFloat
+            or expected_type == saqc.lib.types.PositiveInt
+    ):
+        if value < 0:
+            raise ValueError('warning', f"ValueError: value is negative")
+
+    elif expected_type == saqc.lib.types.FreqString:
+        try:
+            pd.Timedelta(value)  # not accurate enough
+        except (KeyError, ValueError) as e:
+            raise ValueError('warning', f"{repr(e)}")
+
+    return value
+
+
+
+
+
+

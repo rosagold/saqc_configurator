@@ -83,7 +83,7 @@ data_input_section = dbc.Form(
             ],
             row=True,
         ),
-        html.Div([], id="upload-error")
+        html.Div([], id="upload-alert")
     ]
 )
 
@@ -200,13 +200,13 @@ function_section = html.Div(
                             row=True,
                             inline=True,
                         ),
-                        html.Div([], id="submit-error"),  # filled by cb_submit()
+                        html.Div([], id="preview-alert"),  # filled by cb_preview()
                     ]
                 ),
             ]
         ),
         html.Br(),
-        dbc.Card("Result", body=True, id="result"),  # filled by cb_submit()
+        dbc.Card("Result", body=True, id="result"),  # filled by cb_preview()
     ]
 )
 
