@@ -13,126 +13,132 @@ import plotly.express as px
 from helper import FormGroupInput, DivRow
 from const import AGG_METHODS, SAQC_FUNCS, PARSER_MAPPING, RANDOM_TYPES
 
-random_data_section = dbc.Form(
+data_section = html.Div(
     [
-        # Data        [Generate]  [x] outlier [x] plateaus [x] gaps/NaN
-        dbc.FormGroup(
-            [
-                dbc.Label("Data", width=2),
-                dbc.Col(
-                    dbc.Button("Generate", id="random-data"),
-                    width="auto",
-                ),
-                dbc.Col(
-                    dbc.Checklist(
-                        options=RANDOM_TYPES,
-                        inline=True,
-                        id="random-type",
-                    ),
-                    align="center",
-                    width="auto",
-                ),
-            ],
-            row=True,
-        ),
-    ]
-)
 
-data_input_section = dbc.Form(
-    [
-        # Data        [Upload File]  [mean|v]
-        # kwargs      [_________]
-        dbc.FormGroup(
+        # ######################################################################
+        # Random Data
+        # ######################################################################
+        dbc.Form(
             [
-                dbc.Label("Data", width=2),
-                dbc.Col(
-                    dcc.Upload(dbc.Button("Upload File"), id="upload-data"),
-                    width="auto",
-                ),
-                dbc.Col(
-                    dbc.Select(
-                        options=[dict(label=m, value=m) for m in PARSER_MAPPING.keys()],
-                        value=list(PARSER_MAPPING.keys())[0],
-                        id="datafile-type",
-                    ),
-                    width="auto",
-                ),
-            ],
-            row=True,
-            inline=True,
-        ),
-        dbc.FormGroup(
-            [
-                dbc.Label("Parser kwargs", html_for="parser-kwargs", width=2),
-                dbc.Col(
+                # Data        [Generate]  [x] outlier [x] plateaus [x] gaps/NaN
+                dbc.FormGroup(
                     [
-                        dbc.Input(
-                            type="text",
-                            value="header=0, index_col=0, parse_dates=True",
-                            id="parser-kwargs",
+                        dbc.Label("Data", width=2),
+                        dbc.Col(
+                            dbc.Button("Generate", id="random-data"),
+                            width="auto",
                         ),
-                        dbc.FormText(
-                            dcc.Markdown(
-                                "kwargs passed to `pandas.read_csv` or `pandas.read_exel`",
+                        dbc.Col(
+                            dbc.Checklist(
+                                options=RANDOM_TYPES,
+                                inline=True,
+                                id="random-type",
                             ),
-                            color="secondary",
+                            align="center",
+                            width="auto",
                         ),
                     ],
-                    width=10,
+                    row=True,
                 ),
-            ],
-            row=True,
+            ]
         ),
-        html.Div([], id="upload-alert")
-    ]
-)
 
-data_preview = html.Div([], id="df-preview")  # filled by cb_df_preview()
-
-config_input_section = dbc.Form(
-    [
-        # Config  [Upload File]
-        dbc.FormGroup(
-            [
-                dbc.Label("Config (optional)", width=2),
-                dbc.Col(
-                    dcc.Upload(dbc.Button("Upload File"), id="upload-config"),
-                    width="auto",
-                ),
-                dbc.Col(dbc.Button("Clear", id="clear-config"), width="auto"),
-            ],
-            row=True,
-            inline=True,
-        ),
-    ]
-)
-
-# filled by cb_config_preview()
-config_preview = html.Div(
-    dbc.Textarea(
-        debounce=True,
-        rows=10,
-        wrap=True,
-        bs_size="sm",
-        readOnly=True,
-        className="mb-3",
-        id="config-preview",
-    )
-)
-
-input_section = html.Div(
-    [
-        random_data_section,
         html.Hr(),
-        data_input_section,
-        data_preview,
+
+        # ######################################################################
+        # upload data
+        # ######################################################################
+        dbc.Form(
+            [
+                # Data        [Upload File]  [mean|v]
+                # kwargs      [_________]
+                dbc.FormGroup(
+                    [
+                        dbc.Label("Data", width=2),
+                        dbc.Col(
+                            dcc.Upload(dbc.Button("Upload File"), id="upload-data"),
+                            width="auto",
+                        ),
+                        dbc.Col(
+                            dbc.Select(
+                                options=[dict(label=m, value=m) for m in
+                                         PARSER_MAPPING.keys()],
+                                value=list(PARSER_MAPPING.keys())[0],
+                                id="datafile-type",
+                            ),
+                            width="auto",
+                        ),
+                    ],
+                    row=True,
+                    inline=True,
+                ),
+                dbc.FormGroup(
+                    [
+                        dbc.Label("Parser kwargs", html_for="parser-kwargs", width=2),
+                        dbc.Col(
+                            [
+                                dbc.Input(
+                                    type="text",
+                                    value="header=0, index_col=0, parse_dates=True",
+                                    id="parser-kwargs",
+                                ),
+                                dbc.FormText(
+                                    dcc.Markdown(
+                                        "kwargs passed to `pandas.read_csv` or "
+                                        "`pandas.read_exel`",
+                                    ),
+                                    color="secondary",
+                                ),
+                            ],
+                            width=10,
+                        ),
+                    ],
+                    row=True,
+                ),
+                html.Div([], id="upload-alert")
+            ]
+        ),
     ]
 )
+
+tab_data = html.Div([], id="df-preview")  # filled by cb_df_preview()
+tab_plot = html.Div([], id='plot')  # filled by cb_df_preview())
 
 config_section = html.Div(
     [
-        config_input_section,
-        config_preview,
+
+        dbc.Form(
+            [
+                # Config  [Upload File]
+                dbc.FormGroup(
+                    [
+                        dbc.Label("Config (optional)", width=2),
+                        dbc.Col(
+                            dcc.Upload(dbc.Button("Upload File"), id="upload-config"),
+                            width="auto",
+                        ),
+                        dbc.Col(dbc.Button("Clear", id="clear-config"), width="auto"),
+                    ],
+                    row=True,
+                    inline=True,
+                ),
+            ]
+        )
+        ,
+
+        # filled by cb_config_preview()
+        html.Div(
+            dbc.Textarea(
+                debounce=True,
+                rows=10,
+                wrap=True,
+                bs_size="sm",
+                readOnly=True,
+                className="mb-3",
+                id="config-preview",
+            )
+        )
     ]
 )
 
@@ -147,11 +153,6 @@ function_section = html.Div(
                     id="agg-select",
                 ),
             ]
-        ),
-        FormGroupInput(
-            "Field - TODO",
-            placeholder='a column from data',
-            id="data-column"
         ),
         DivRow(
             [
@@ -210,31 +211,104 @@ function_section = html.Div(
     ]
 )
 
-layout = dbc.Container(
+title = html.H1("SaQC Configurator")
+
+data_card = dbc.Card(
     [
-        html.H1("SaQC Configurator"),
-        dbc.Card(
-            [
-                dbc.CardHeader("1. generate or upload data"),
-                dbc.CardBody([input_section]),
-            ]
+        dbc.CardHeader("Input"),
+        dbc.CardBody([data_section]),
+    ]
+)
+
+preview_card = dbc.Card(
+    [
+        dbc.CardHeader("Data Preview / Plot"),
+        dbc.CardBody(
+            dbc.Tabs(
+                [
+                    dbc.Tab([], label="Data preview", id='df-preview'),
+                    dbc.Tab([], label="Plot", id='plot'),
+                ],
+                active_tab='tab-0',
+            )
         ),
+    ]
+)
+
+function_card = dbc.Card(
+    [
+        dbc.CardHeader("Functions"),
+        dbc.CardBody([function_section]),
+    ]
+)
+
+config_card = dbc.Card(
+    [
+        dbc.CardHeader("Config"),
+        dbc.CardBody([config_section]),
+    ]
+)
+
+# ######################################################################
+# Final layouts
+# ######################################################################
+
+
+# all in columns
+layout0 = dbc.Container([
+    title,
+    data_card,
+    preview_card,
+    function_card,
+    config_card,
+])
+
+# row(col,col)
+# row(col,col)
+# ------.--------
+# data  | preview
+#       | preview
+# ------|--------
+# func  | config
+# func  |
+# func  |
+# ------^--------
+layout1 = dbc.Container(
+    [
+        title,
+        dbc.Row([
+            dbc.Col([data_card], width=5),
+            dbc.Col([config_card], width=7),
+        ]),
+
         html.Br(),
-        dbc.Card(
-            [
-                dbc.CardHeader("2. optionally upload an existing config"),
-                dbc.CardBody([config_section]),
-            ]
-        ),
-        html.Br(),
-        dbc.Card(
-            [
-                dbc.CardHeader("3. choose a function"),
-                dbc.CardBody([function_section]),
-            ]
-        ),
-        dbc.Card([
-            dbc.CardBody([], id='plot'),
+
+        dbc.Row([
+            dbc.Col([function_card], width=5),
+            dbc.Col([preview_card], width=7),
         ]),
     ],
+    fluid=True,
 )
+
+# row(col,col)
+# row(col,col)
+# ------.--------
+# data  | config
+# func  | config
+# func  | preview
+# func  |
+# func  |
+# ------^--------
+layout2 = dbc.Container(
+    [
+        title,
+        dbc.Row([
+            dbc.Col([data_card, function_card], width=5),
+            dbc.Col([config_card, preview_card], width=7),
+        ]),
+    ],
+    fluid=True,
+)
+
+layout = layout1

@@ -31,3 +31,4 @@ cache = Cache(app.server, config={
     'CACHE_DIR': '.server_cache'
 })
 app.layout = serve_layout
+server = app.server
