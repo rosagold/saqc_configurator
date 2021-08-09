@@ -24,11 +24,15 @@ def serve_layout():
     return outlay
 
 
-app = dash.Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP])
-# app.config.suppress_callback_exceptions = True
+app = dash.Dash(
+    __name__,
+    external_stylesheets=[dbc.themes.BOOTSTRAP],
+    url_base_pathname='/saqcConfigurator/',
+    suppress_callback_exceptions=False,
+)
+app.layout = serve_layout
+
 cache = Cache(app.server, config={
     'CACHE_TYPE': 'filesystem',
     'CACHE_DIR': '.server_cache'
 })
-app.layout = serve_layout
-server = app.server

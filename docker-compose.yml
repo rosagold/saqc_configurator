@@ -1,0 +1,10 @@
+# docker-compose.yml
+version: '3'
+services:
+  # main application
+  saqc_configurator:
+    container_name: saqc_configurator
+    build:
+      context: .
+    ports:
+      - "8000:8000"
