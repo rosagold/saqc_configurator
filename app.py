@@ -16,10 +16,12 @@ def serve_layout():
 
     outlay = html.Div([
         dcc.Store(id='session-id', data=session_id),
-        dcc.Store(id="df-present", data=False),
+        dcc.Store(id="new-data", data=False),
         dcc.Store(id="func-selected", data=False),
+        dcc.Store(id='func-field', data=None),
         dcc.Store(id="params-parsed", data=False),
         dcc.Store(id='default-field', data=None),
+        dcc.Store(id='new-default-field', data=None),
         layout
     ])
     return outlay

@@ -8,6 +8,7 @@ import json
 import typing
 
 import numpy as np
+from numpy.random import randint, rand
 import typeguard
 import pandas as pd
 
@@ -39,22 +40,48 @@ from app import app
     Output('upload-data', 'filename'),
     Input('random-data', 'n_clicks'),
     State('session-id', 'data'),
+    State('random-type', 'value')
 )
-def cb_click_to_random(n, session_id):
+def cb_click_to_random(n, session_id, random_type):
+    random_type = random_type or []
     if n is None:
         raise PreventUpdate
-    rows = 990
+
+    rows, cols = 990, 10
+    points = rows * cols
+    r = np.random.rand(points) * 10
+
+    if 'outliers' in random_type:
+        nr = np.random.randint(points * 0.01, points * 0.1)
+        idx = np.random.choice(range(points), size=nr, replace=False)
+        r[idx] = (r[idx] + 2) * 10
+
+    if 'gaps' in random_type:
+        nr = np.random.randint(points * 0.01, points * 0.1)
+        idx = np.random.choice(range(points), size=nr, replace=False)
+        r[idx] = np.nan
+
     start = np.random.randint(9466848, 16094592) * 10 ** 11
-    r = np.random.rand(rows, 10) * 10
     i = pd.date_range(start=start, periods=rows, freq='10min')
-    df = pd.DataFrame(index=i, data=r, columns=list('abcdefghij'))
+    df = pd.DataFrame(index=i, data=r.reshape(rows, cols), columns=list('abcdefghij'))
+
+    if 'plateaus' in random_type:
+        for j in range(len(df.columns)):
+            nr = np.random.randint(1, 11)
+            idx = np.random.choice(df.index, size=nr, replace=False)
+            for i in idx:
+                size = np.random.randint(5, 20)
+                i = df.index.get_loc(i)
+                size = len(df.iloc[i:i + size])  # shrink if `i+size > len(df.index)`
+                df.iloc[i:i + size, j] = randint(2, 11) * 10 + np.random.rand(size)
+
     df = df.round(2)
     cache_set(session_id, 'df', df)
     return 'random_data'
 
 
 @app.callback(
-    Output('df-present', 'data'),
+    Output('new-data', 'data'),
     Output('parser-kwargs', 'invalid'),
     Output('upload-alert', 'children'),
     Input('upload-data', 'filename'),
@@ -68,14 +95,14 @@ def cb_parse_data(filename, content, filetype, parser_kws, session_id):
         raise PreventUpdate
 
     if filename == 'random_data':
-        # df_present, kws_invalid, alerts
+        # new_data, kws_invalid, alerts
         return True, False, []
 
     try:
         parser_kws = parse_keywords(parser_kws)
     except SyntaxError:
         msg = "Keyword parsing error: Syntax: 'key1=..., key3=..., key3=...'"
-        # df_present, kws_invalid, alerts
+        # new_data, kws_invalid, alerts
         return False, True, dbc.Alert(msg, color='danger')
 
     content_type, content_string = content.split(',')
@@ -86,23 +113,23 @@ def cb_parse_data(filename, content, filetype, parser_kws, session_id):
             raise ValueError("DataFrame must not be empty.")
     except Exception as e:
         msg = f"Data parsing error: {repr(e)}"
-        # df_present, kws_invalid, alerts
+        # new_data, kws_invalid, alerts
         return False, False, dbc.Alert(msg, color='danger')
 
     cache_set(session_id, 'df', df)
-    # df_present, kws_invalid, alerts
+    # new_data, kws_invalid, alerts
     return True, False, []
 
 
 @app.callback(
     Output('df-preview', 'children'),
-    Input('df-present', 'data'),
+    Input('new-data', 'data'),
     State('upload-data', 'filename'),
     State('session-id', 'data'),
 )
-def cb_df_preview(df_present, filename, session_id):
+def cb_df_preview(new_data, filename, session_id):
     # todo: a callback same as this for plot
-    if not df_present or filename is None:
+    if not new_data or filename is None:
         raise PreventUpdate
 
     df = cache_get(session_id, 'df')
@@ -129,6 +156,18 @@ def cb_df_preview(df_present, filename, session_id):
 
 
 # ======================================================================
+# Plot
+# ======================================================================
+
+# @app.callback(
+#     Output('df-plot', 'children'),
+#     Input('new-data', 'data'),
+#     State('upload-data', 'filename'),
+#     State('session-id', 'data'),
+# )
+# def cb_df_preview(new_data, filename, session_id):
+
+# ======================================================================
 # Function section and param validation
 # ======================================================================
 
@@ -146,13 +185,13 @@ def cb_params_header(funcname, session_id):
     return True, html.H4(funcname)
 
 
-def _get_default_for_field(default, session_id):
-    if default is None:
-        df = cache_get(session_id, 'df', pd.DataFrame(columns=[None]))
-        default = df.columns[0]  # we don't allow empty DataFrames
-        if default is not None:
-            default = repr(default)
-    return default
+def _get_df_first_col_or_none(default, session_id):
+    if default is not None:
+        return default
+    df = cache_get(session_id, 'df', None)
+    if df is None or df.columns.empty:
+        return None
+    return df.columns[0]
 
 
 def _get_docstring_description(docstr):
@@ -165,6 +204,35 @@ def _get_docstring_description(docstr):
             o = f"#### {o.args[0].capitalize()}\n{o.description}"
         children.append(dcc.Markdown(o))
     return children
+
+
+@app.callback(
+    Output('default-field', 'data'),
+    Input('new-data', 'data'),
+    Input('func-field', 'data'),  # the `field` param of the selected function
+    State('default-field', 'data'),
+    State('session-id', 'data')
+)
+def cb_foo(new_data, func_field, default_field, session_id):
+    ctx = dash.callback_context
+    if not ctx.triggered:
+        raise PreventUpdate
+
+    # once the user set a valid field we keep it forever
+    if func_field is not None:
+        return func_field
+
+    df = cache_get(session_id, 'df', None)
+    if df is None or df.columns.empty:
+        columns = [None]
+    else:
+        columns = df.columns
+
+    # check if our possibly suggested default is still valid
+    if default_field in columns:
+        return default_field
+
+    return str(columns[0])  # suggest a default
 
 
 @app.callback(
@@ -209,7 +277,9 @@ def cb_params_body(func_selected, default_field, session_id):
 
         # special param `field`
         if name == 'field':
-            default = _get_default_for_field(default_field, session_id)
+            default = default_field
+            if default is not None:
+                default = repr(default)
             description = "A column name holding the data."
 
         # using a dict as `id` makes pattern matching callbacks possible
@@ -284,7 +354,7 @@ def cb_param_validation(value, param_id, session_id):
 
 @app.callback(
     Output('params-parsed', 'data'),
-    Output('default-field', 'data'),
+    Output('func-field', 'data'),
     Input({'group': 'param', 'id': ALL}, 'invalid'),
     State({'group': 'param', 'id': ALL}, 'value'),
     State({'group': 'param', 'id': ALL}, 'id'),
@@ -292,22 +362,28 @@ def cb_param_validation(value, param_id, session_id):
     State('func-selected', 'data'),
     State('session-id', 'data'),
 )
-def cb_parsing_done_and_default_field(
+def cb_parsing_done(
         invalids, values, param_ids, default_field, func_selected, session_id
 ):
     if not func_selected:
         raise PreventUpdate
 
-    # set the default value for `field` (which is always present)
-    # to the current value, unless the value is not valid
+    # if the user enters a value for `field`, which is always present (!)
+    # we update the default field, unless the value is not valid, then we
+    # keep its former default
     i = param_ids.index({'group': 'param', 'id': 'field'})
     if invalids[i]:
-        default = default_field
+        if values[i] == '':
+            func_field = None
+        else:
+            func_field = default_field
+
+    # unfortunately valid means ugly quotes
     else:
-        default = values[i]
+        func_field = values[i][1:-1]
 
     if any(invalids):
-        return False, default
+        return False, func_field
 
     # store params in cache
     params = dict()
@@ -322,7 +398,7 @@ def cb_parsing_done_and_default_field(
         params[name] = param_parse(value)
     cache_set(session_id, 'params', params)
 
-    return True, default
+    return True, func_field
 
 
 # ======================================================================
@@ -376,11 +452,11 @@ def cb_config_preview(add, clear, content, config, session_id):
 @app.callback(
     Output('preview', 'disabled'),
     Input('params-parsed', 'data'),
-    Input('df-present', 'data'),
+    Input('new-data', 'data'),
 )
-def cb_enable_preview(parsed, df_present):
+def cb_enable_preview(parsed, new_data):
     """ enable preview-button if we have data and all param-inputs are valid. """
-    return not parsed or not df_present
+    return not parsed or not new_data
 
 
 @app.callback(

@@ -21,11 +21,11 @@ data_section = html.Div(
         # ######################################################################
         dbc.Form(
             [
-                # Data        [Generate]  [x] outlier [x] plateaus [x] gaps/NaN
                 dbc.FormGroup(
                     [
                         dbc.Label("Data", width=2),
                         dbc.Col(
+                            # trigger -> cb_click_to_random
                             dbc.Button("Generate", id="random-data"),
                             width="auto",
                         ),
@@ -222,7 +222,7 @@ data_card = dbc.Card(
 
 preview_card = dbc.Card(
     [
-        dbc.CardHeader("Data Preview / Plot"),
+        dbc.CardHeader("Data / Plot"),
         dbc.CardBody(
             dbc.Tabs(
                 [

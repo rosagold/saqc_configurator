@@ -17,9 +17,9 @@ IGNORED_PARAMS = ['data', 'flags', 'kwargs']
 AGG_METHODS = ['mean', 'min', 'max', 'sum']  # first is default
 
 RANDOM_TYPES = [
-    {"label": "with outlier", "value": 1},
-    {"label": "with plateaus", "value": 2},
-    {"label": "with gaps/NaNs", "value": 3},
+    {"label": "with outlier", "value": 'outliers'},
+    {"label": "with plateaus", "value": 'plateaus'},
+    {"label": "with gaps/NaNs", "value": 'gaps'},
 ]
 
 TYPE_MAPPING = {
