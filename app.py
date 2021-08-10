@@ -2,6 +2,7 @@
 import uuid
 
 import dash
+import os
 import dash_bootstrap_components as dbc
 import dash_html_components as html
 import dash_core_components as dcc
@@ -25,9 +26,9 @@ def serve_layout():
 
 
 app = dash.Dash(
-    __name__,
+    name=__name__,
     external_stylesheets=[dbc.themes.BOOTSTRAP],
-    url_base_pathname='/saqcConfigurator/',
+    url_base_pathname=os.getenv("APP_URL", None),
     suppress_callback_exceptions=False,
 )
 app.layout = serve_layout

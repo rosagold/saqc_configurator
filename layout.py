@@ -211,7 +211,7 @@ function_section = html.Div(
     ]
 )
 
-title = html.H1("SaQC Configurator")
+title = html.H1("SaQC Configuration App")
 
 data_card = dbc.Card(
     [

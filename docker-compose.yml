@@ -2,8 +2,11 @@
 version: '3'
 services:
   # main application
-  saqc_configurator:
-    container_name: saqc_configurator
+  saqc-config-app:
+    container_name: saqc-config-app
+    environment:
+      # must start and end with slash (`/`)
+      - APP_URL=/saqc-config-app/
     build:
       context: .
     ports:
