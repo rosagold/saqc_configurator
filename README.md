@@ -15,6 +15,8 @@ docker-compose up
 Open a browser and go to
 [http://0.0.0.0:8000/saqc-config-app/](http://0.0.0.0:8000/saqc-config-app/)
 
+> **Hint**: To rebuild a docker image after some source files changed use `docker-compose up --build`
+
 
 Parameter in the GUI
 --------------------
