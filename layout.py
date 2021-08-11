@@ -11,7 +11,8 @@ import dash_table
 import plotly.express as px
 
 from helper import FormGroupInput, DivRow
-from const import AGG_METHODS, SAQC_FUNCS, PARSER_MAPPING, RANDOM_TYPES
+from const import AGG_METHODS, SAQC_FUNCS, PARSER_MAPPING, RANDOM_TYPES, MAX_FILE_SIZE, \
+    MEGA, PARSER_KW_DEFAULTS
 
 data_section = html.Div(
     [
@@ -57,16 +58,29 @@ data_section = html.Div(
                     [
                         dbc.Label("Data", width=2),
                         dbc.Col(
-                            dcc.Upload(dbc.Button("Upload File"), id="upload-data"),
+                            [
+                                dcc.Upload(
+                                    dbc.Button("Upload File"),
+                                    max_size=MAX_FILE_SIZE,
+                                    id="upload-data",
+                                ),
+                                dbc.FormText(
+                                    f"Maximum upload file size: {MAX_FILE_SIZE//MEGA}M",
+                                    color="secondary",
+                                ),
+                            ],
                             width="auto",
                         ),
                         dbc.Col(
-                            dbc.Select(
-                                options=[dict(label=m, value=m) for m in
-                                         PARSER_MAPPING.keys()],
-                                value=list(PARSER_MAPPING.keys())[0],
-                                id="datafile-type",
-                            ),
+                            [
+                                dbc.Select(
+                                    options=[dict(label=m, value=m) for m in
+                                             PARSER_MAPPING.keys()],
+                                    value=list(PARSER_MAPPING.keys())[0],
+                                    id="datafile-type",
+                                ),
+
+                            ],
                             width="auto",
                         ),
                     ],
@@ -80,7 +94,7 @@ data_section = html.Div(
                             [
                                 dbc.Input(
                                     type="text",
-                                    value="header=0, index_col=0, parse_dates=True",
+                                    value=PARSER_KW_DEFAULTS,
                                     id="parser-kwargs",
                                 ),
                                 dbc.FormText(
@@ -210,19 +224,19 @@ function_section = html.Div(
 
 data_table = html.Div(["No data yet"], id='data-table')
 plot_container = html.Div([
-        dbc.FormGroup(
-            [
-                dbc.Label("Column to plot", width='auto', html_for="plot-column"),
-                dbc.Col(
-                    dbc.Select(
-                        id="plot-column",
-                        placeholder='No data to plot'
-                    ),
-                    width="auto",
-                )
-            ], row=True, inline=True
-        ),
-        dcc.Graph(id='graph')
+    dbc.FormGroup(
+        [
+            dbc.Label("Column to plot", width='auto', html_for="plot-column"),
+            dbc.Col(
+                dbc.Select(
+                    id="plot-column",
+                    placeholder='No data to plot'
+                ),
+                width="auto",
+            )
+        ], row=True, inline=True
+    ),
+    dcc.Graph(id='graph')
 ])
 
 title = html.H1("SaQC Configuration App")

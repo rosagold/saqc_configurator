@@ -28,7 +28,8 @@ from helper import (
     parse_data, type_repr, parse_keywords, cache_get, cache_set,
     saqc_func_repr, param_parse, param_typecheck
 )
-from const import AGG_METHODS, SAQC_FUNCS, TYPE_MAPPING, IGNORED_PARAMS, PARSER_MAPPING
+from const import AGG_METHODS, SAQC_FUNCS, TYPE_MAPPING, IGNORED_PARAMS, PARSER_MAPPING, \
+    AGG_THRESHOLD, MAX_DF_ROWS
 from app import app
 
 
@@ -125,10 +126,18 @@ def cb_upload_data(filename, content, filetype, parser_kws, session_id):
         # new-upload, kws_invalid, alerts
         return False, False, dbc.Alert(msg, color='danger')
 
+    alert = []
+    if len(df.index) > MAX_DF_ROWS:
+        df = df.iloc[:MAX_DF_ROWS, :]
+        msg = f'Maximum data set size exceeded. ' \
+              f'The data is truncated to {MAX_DF_ROWS} rows per column'
+        alert = dbc.Alert([html.B('Warning: '), msg], color='warning')
+    print(alert)
+
     flags = pd.DataFrame(False, index=df.index, columns=df.columns, dtype=bool)
     cache_set(session_id, 'df', df)
     cache_set(session_id, 'flags', flags)
-    return True, False, []  # new-upload, kws_invalid, alerts
+    return True, False, alert  # new-upload, kws_invalid, alerts
 
 
 @app.callback(
@@ -149,7 +158,7 @@ def cb_new_data(upload):
     State('upload-data', 'filename'),
     State('session-id', 'data'),
 )
-def cb_df_preview(new_data, filename, session_id):
+def cb_data_table(new_data, filename, session_id):
     if not new_data or filename is None:
         raise PreventUpdate
 
@@ -189,7 +198,7 @@ def cb_df_preview(new_data, filename, session_id):
     State('default-field', 'data'),
     State('session-id', 'data'),
 )
-def cb_fill_plot_column_select(preview, new_data, func_field, default_field, session_id):
+def cb_fill_plot_column_select(_0, _1, func_field, default_field, session_id):
     df = cache_get(session_id, 'df', None)
     if df is None:
         return None, None
@@ -218,8 +227,20 @@ def cb_fill_plot_column_select(preview, new_data, func_field, default_field, ses
 def cb_plot_var(plotcol, session_id):
     if not plotcol:
         return dict(data=[], layout={}, frames=[])
-    df = cache_get(session_id, 'df', None)
-    fig = px.line(df, x=df.index, y=plotcol)
+    df: pd.DataFrame = cache_get(session_id, 'df', None)
+    df = df[[plotcol]]
+
+    # aggregation for big data
+    # # df = df.reset_index()
+    # window = len(df.index) // AGG_THRESHOLD
+    # if window > 2:
+    #     if df.index.inferred_type.startswith('datetime'):
+    #         window = (df.index.max() - df.index.min()) / AGG_THRESHOLD
+    #     df = df.resample(window).agg('mean')
+
+    indexname = df.index.name or 'index'
+    x, y = df.index, df[plotcol]
+    fig = px.line(x=x, y=y, labels=dict(x=indexname, y=plotcol))
     return fig
 
 
@@ -260,7 +281,7 @@ def _get_docstring_description(docstr):
     State('default-field', 'data'),
     State('session-id', 'data')
 )
-def cb_maybe_update_default_field(new_data, func_field, default_field, session_id):
+def cb_maybe_update_default_field(_0, func_field, default_field, session_id):
     """
     - update the default if the user entered a new valid value
     - keep the old value otherwise
@@ -469,8 +490,8 @@ def cb_enable_add_to_config(parsed):
 
 @app.callback(
     Output('config-preview', 'value'),
-    Input('add-to-config', 'n_clicks'),
-    Input('clear-config', 'n_clicks'),
+    Input('add-to-config', 'n_clicks'),  # trigger by `add`
+    Input('clear-config', 'n_clicks'),  # trigger by `clear`
     Input('upload-config', 'contents'),
     State('config-preview', 'value'),
     State('session-id', 'data'),

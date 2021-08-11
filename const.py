@@ -13,6 +13,13 @@ from saqc.lib.types import (
     IntegerWindow,
 )
 
+
+AGG_THRESHOLD = 100
+MAX_DF_ROWS = 10000
+MEGA = 10**6
+MAX_FILE_SIZE = 10 * MEGA  # in byte
+PARSER_KW_DEFAULTS = "header=0, index_col=0, parse_dates=True, nrows=10000"
+
 IGNORED_PARAMS = ['data', 'flags', 'kwargs']
 AGG_METHODS = ['mean', 'min', 'max', 'sum']  # first is default
 

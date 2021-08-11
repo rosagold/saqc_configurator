@@ -6,4 +6,6 @@ from callbacks import app
 server = app.server
 
 if __name__ == '__main__':
+    import logging
+    # logging.basicConfig(level=logging.DEBUG)
     app.run_server(debug=True)
