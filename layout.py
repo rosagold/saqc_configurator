@@ -141,16 +141,16 @@ config_section = html.Div(
 
 function_section = html.Div(
     [
-        DivRow(
-            [
-                "preview aggregation method :",
-                dbc.Select(
-                    options=[dict(label=m, value=m) for m in AGG_METHODS],
-                    value=AGG_METHODS[0],
-                    id="agg-select",
-                ),
-            ]
-        ),
+        # DivRow(
+        #     [
+        #         "preview aggregation method :",
+        #         dbc.Select(
+        #             options=[dict(label=m, value=m) for m in AGG_METHODS],
+        #             value=AGG_METHODS[0],
+        #             id="agg-select",
+        #         ),
+        #     ]
+        # ),
         DivRow(
             [
                 "function: ",

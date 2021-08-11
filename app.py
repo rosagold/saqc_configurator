@@ -21,7 +21,7 @@ def serve_layout():
         dcc.Store(id="data-update", data=False),  # function result changed data/flags
         dcc.Store(id="func-selected", data=False),  # saqc-function in cache
         dcc.Store(id='plot-column-preselect', data=None),  # first to show column
-        dcc.Store(id='func-field', data=None),  # data user put in input `field`
+        dcc.Store(id='func-field', data=None),  # the valid (!) value the user put in the input `field` otherwiese None
         dcc.Store(id="params-parsed", data=False),  # indicate if all params are parsed successfully
         dcc.Store(id='default-field', data=None),  # default value or suggestion for `field`
         dcc.Store(id='ignore'),  # (debug) placeholder
@@ -34,7 +34,7 @@ app = dash.Dash(
     name=__name__,
     external_stylesheets=[dbc.themes.BOOTSTRAP],
     url_base_pathname=os.getenv("APP_URL", None),
-    suppress_callback_exceptions=True,
+    suppress_callback_exceptions=False,
 )
 app.layout = serve_layout
 

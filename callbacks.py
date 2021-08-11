@@ -184,18 +184,21 @@ def cb_df_preview(new_data, filename, session_id):
     Output('plot-column', 'options'),
     Output('plot-column', 'value'),
     Input('new-data', 'data'),
+    Input('preview', 'n_clicks'),  # trigger a recheck of `preselect` on `Preview` click
+    State('func-field', 'data'),
     State('default-field', 'data'),
     State('session-id', 'data'),
 )
-def cb_fill_plot_column_select(new_data, default_field, session_id):
-    if not new_data:
-        raise PreventUpdate
+def cb_fill_plot_column_select(preview, new_data, func_field, default_field, session_id):
     df = cache_get(session_id, 'df', None)
     if df is None:
-        return []
+        return None, None
 
-    preselect = default_field
-    if preselect is None:
+    if func_field is not None and func_field in df.columns:
+        preselect = func_field
+    elif default_field is not None and default_field in df.columns:
+        preselect = default_field
+    else:
         preselect = df.columns[0]
 
     options = [dict(label=c, value=c) for c in df.columns]
@@ -213,6 +216,8 @@ def cb_fill_plot_column_select(new_data, default_field, session_id):
     State('session-id', 'data'),
 )
 def cb_plot_var(plotcol, session_id):
+    if not plotcol:
+        return dict(data=[], layout={}, frames=[])
     df = cache_get(session_id, 'df', None)
     fig = px.line(df, x=df.index, y=plotcol)
     return fig
@@ -255,7 +260,13 @@ def _get_docstring_description(docstr):
     State('default-field', 'data'),
     State('session-id', 'data')
 )
-def cb_set_default_field(new_data, func_field, default_field, session_id):
+def cb_maybe_update_default_field(new_data, func_field, default_field, session_id):
+    """
+    - update the default if the user entered a new valid value
+    - keep the old value otherwise
+    - initially suggest a df-column
+    """
+
     ctx = dash.callback_context
     if not ctx.triggered:
         raise PreventUpdate
@@ -263,6 +274,8 @@ def cb_set_default_field(new_data, func_field, default_field, session_id):
     # once the user set a valid field we keep it forever
     if func_field is not None:
         return func_field
+
+    # now func_field is None !
 
     df = cache_get(session_id, 'df', None)
     if df is None or df.columns.empty:
@@ -349,11 +362,12 @@ def cb_params_body(func_selected, default_field, session_id):
 @app.callback(
     Output({'group': 'param', 'id': MATCH}, 'invalid'),
     Output({'group': 'param-validation', 'id': MATCH}, 'children'),
+    Input('new-data', 'data'),  # trigger a re-check on new data
     Input({'group': 'param', 'id': MATCH}, 'value'),
     State({'group': 'param', 'id': MATCH}, 'id'),
     State('session-id', 'data')
 )
-def cb_param_validation(value, param_id, session_id):
+def cb_param_validation(new_data, value, param_id, session_id):
     """
     validated param input and show an alert if validation fails
     """
@@ -401,12 +415,11 @@ def cb_param_validation(value, param_id, session_id):
     Input({'group': 'param', 'id': ALL}, 'invalid'),
     State({'group': 'param', 'id': ALL}, 'value'),
     State({'group': 'param', 'id': ALL}, 'id'),
-    State('default-field', 'data'),
     State('func-selected', 'data'),
     State('session-id', 'data'),
 )
 def cb_parsing_done(
-        invalids, values, param_ids, default_field, func_selected, session_id
+        invalids, values, param_ids, func_selected, session_id
 ):
     if not func_selected:
         raise PreventUpdate
@@ -416,11 +429,7 @@ def cb_parsing_done(
     # keep its former default
     i = param_ids.index({'group': 'param', 'id': 'field'})
     if invalids[i]:
-        if values[i] == '':
-            func_field = None
-        else:
-            func_field = default_field
-
+        func_field = None
     # unfortunately valid means ugly quotes
     else:
         func_field = values[i][1:-1]
