@@ -198,17 +198,35 @@ function_section = html.Div(
                             row=True,
                             inline=True,
                         ),
-                        html.Div([], id="preview-alert"),  # filled by cb_preview()
+                        html.Div([], id="preview-alert"),  # filled by cb_process()
                     ]
                 ),
             ]
         ),
         html.Br(),
-        dbc.Card("Result", body=True, id="result"),  # filled by cb_preview()
+        dbc.Card("Result", body=True, id="result"),  # filled by cb_process()
     ]
 )
 
+data_table = html.Div(["No data yet"], id='data-table')
+plot_container = html.Div([
+        dbc.FormGroup(
+            [
+                dbc.Label("Column to plot", width='auto', html_for="plot-column"),
+                dbc.Col(
+                    dbc.Select(
+                        id="plot-column",
+                        placeholder='No data to plot'
+                    ),
+                    width="auto",
+                )
+            ], row=True, inline=True
+        ),
+        dcc.Graph(id='graph')
+])
+
 title = html.H1("SaQC Configuration App")
+footer = html.Div([html.Br()] * 5)
 
 data_card = dbc.Card(
     [
@@ -223,10 +241,8 @@ preview_card = dbc.Card(
         dbc.CardBody(
             dbc.Tabs(
                 [
-                    dbc.Tab([], label="Data", id='df-preview'),
-                    dbc.Tab([
-                        # fixme Div([])'s for plot column-chooser and agg-chooser ??
-                    ], label="Plot", id='plot-container'),
+                    dbc.Tab([html.Br(), plot_container], label="Plot"),  # tab-0
+                    dbc.Tab([html.Br(), data_table], label="Data"),  # tab-1
                 ],
                 active_tab='tab-0',
             )
@@ -260,6 +276,7 @@ layout0 = dbc.Container([
     preview_card,
     function_card,
     config_card,
+    footer,
 ])
 
 # row(col,col)
@@ -286,6 +303,8 @@ layout1 = dbc.Container(
             dbc.Col([function_card], width=5),
             dbc.Col([preview_card], width=7),
         ]),
+
+        footer,
     ],
     fluid=True,
 )
@@ -306,6 +325,7 @@ layout2 = dbc.Container(
             dbc.Col([data_card, function_card], width=5),
             dbc.Col([config_card, preview_card], width=7),
         ]),
+        footer,
     ],
     fluid=True,
 )

@@ -43,6 +43,13 @@ from app import app
     State('random-type', 'value')
 )
 def cb_click_to_random(n, session_id, random_type):
+    """
+    Generate random data.
+
+    After generation we fake a click to upload-button by
+    setting a new filename, this will trigger the `cb_upload_data`
+    callback.
+    """
     random_type = random_type or []
     if n is None:
         raise PreventUpdate
@@ -76,12 +83,14 @@ def cb_click_to_random(n, session_id, random_type):
                 df.iloc[i:i + size, j] = randint(2, 11) * 10 + np.random.rand(size)
 
     df = df.round(2)
+    flags = pd.DataFrame(False, index=df.index, columns=df.columns, dtype=bool)
     cache_set(session_id, 'df', df)
+    cache_set(session_id, 'flags', flags)
     return 'random_data'
 
 
 @app.callback(
-    Output('new-data', 'data'),
+    Output('new-upload', 'data'),
     Output('parser-kwargs', 'invalid'),
     Output('upload-alert', 'children'),
     Input('upload-data', 'filename'),
@@ -90,19 +99,19 @@ def cb_click_to_random(n, session_id, random_type):
     Input('parser-kwargs', 'value'),
     State('session-id', 'data'),
 )
-def cb_parse_data(filename, content, filetype, parser_kws, session_id):
+def cb_upload_data(filename, content, filetype, parser_kws, session_id):
     if filename is None:
         raise PreventUpdate
 
     if filename == 'random_data':
-        # new_data, kws_invalid, alerts
+        # new-upload, kws_invalid, alerts
         return True, False, []
 
     try:
         parser_kws = parse_keywords(parser_kws)
     except SyntaxError:
         msg = "Keyword parsing error: Syntax: 'key1=..., key3=..., key3=...'"
-        # new_data, kws_invalid, alerts
+        # new-upload, kws_invalid, alerts
         return False, True, dbc.Alert(msg, color='danger')
 
     content_type, content_string = content.split(',')
@@ -113,27 +122,39 @@ def cb_parse_data(filename, content, filetype, parser_kws, session_id):
             raise ValueError("DataFrame must not be empty.")
     except Exception as e:
         msg = f"Data parsing error: {repr(e)}"
-        # new_data, kws_invalid, alerts
+        # new-upload, kws_invalid, alerts
         return False, False, dbc.Alert(msg, color='danger')
 
+    flags = pd.DataFrame(False, index=df.index, columns=df.columns, dtype=bool)
     cache_set(session_id, 'df', df)
-    # new_data, kws_invalid, alerts
-    return True, False, []
+    cache_set(session_id, 'flags', flags)
+    return True, False, []  # new-upload, kws_invalid, alerts
 
 
 @app.callback(
-    Output('df-preview', 'children'),
+    Output('new-data', 'data'),
+    Input('new-upload', 'data'),
+)
+def cb_new_data(upload):
+    return upload
+
+
+# ======================================================================
+# Data Table
+# ======================================================================
+
+@app.callback(
+    Output('data-table', 'children'),
     Input('new-data', 'data'),
     State('upload-data', 'filename'),
     State('session-id', 'data'),
 )
 def cb_df_preview(new_data, filename, session_id):
-    # todo: a callback same as this for plot
     if not new_data or filename is None:
         raise PreventUpdate
 
     df = cache_get(session_id, 'df')
-    df = df.reset_index()
+    df = df.reset_index()  # otherwise the index will not show up
 
     columns = []
     for c in df.columns:
@@ -160,12 +181,13 @@ def cb_df_preview(new_data, filename, session_id):
 # ======================================================================
 
 @app.callback(
-    Output('plot-container', 'children'),
+    Output('plot-column', 'options'),
+    Output('plot-column', 'value'),
     Input('new-data', 'data'),
     State('default-field', 'data'),
     State('session-id', 'data'),
 )
-def cb_plot(new_data, default_field, session_id):
+def cb_fill_plot_column_select(new_data, default_field, session_id):
     if not new_data:
         raise PreventUpdate
     df = cache_get(session_id, 'df', None)
@@ -176,28 +198,18 @@ def cb_plot(new_data, default_field, session_id):
     if preselect is None:
         preselect = df.columns[0]
 
-    col_chooser = dbc.FormGroup(
-        [
-            dbc.Label("Column to plot", width='auto'),
-            dbc.Col(
-                dbc.Select(
-                    options=[dict(label=c, value=c) for c in df.columns],
-                    value=preselect,
-                    id="plotcol-select",
-                ),
-                width="auto",
-            )
-        ], row=True, inline=True
-    )
+    options = [dict(label=c, value=c) for c in df.columns]
+    value = preselect
+    return options, value
 
-    fig = px.line(df, x=df.index, y=preselect)
-    graph = dcc.Graph(figure=fig, id='graph')
-    return [html.Br(), col_chooser, graph]
+    # fig = px.line(df, x=df.index, y=preselect)
+    # graph = dcc.Graph(figure=fig, id='graph')
+    # return [html.Br(), col_chooser, graph]
 
 
 @app.callback(
     Output('graph', 'figure'),
-    Input('plotcol-select', 'value'),
+    Input('plot-column', 'value'),
     State('session-id', 'data'),
 )
 def cb_plot_var(plotcol, session_id):
@@ -207,7 +219,7 @@ def cb_plot_var(plotcol, session_id):
 
 
 # ======================================================================
-# Function section and param validation
+# Function section and param parsing
 # ======================================================================
 
 @app.callback(
@@ -222,15 +234,6 @@ def cb_params_header(funcname, session_id):
     func = SAQC_FUNCS[funcname]
     cache_set(session_id, 'func', func)
     return True, html.H4(funcname)
-
-
-def _get_df_first_col_or_none(default, session_id):
-    if default is not None:
-        return default
-    df = cache_get(session_id, 'df', None)
-    if df is None or df.columns.empty:
-        return None
-    return df.columns[0]
 
 
 def _get_docstring_description(docstr):
@@ -361,6 +364,7 @@ def cb_param_validation(value, param_id, session_id):
     if value == "":
         return True, dbc.Alert([html.B('Error: '), 'Missing value'], color='danger')
 
+    # existence of func is ensured by earlier callbacks
     func = cache_get(session_id, 'func')
     df = cache_get(session_id, 'df', None)
 
@@ -485,7 +489,7 @@ def cb_config_preview(add, clear, content, config, session_id):
 
 
 # ======================================================================
-# Preview / Plot
+# Processing
 # ======================================================================
 
 @app.callback(
@@ -506,7 +510,7 @@ def cb_enable_preview(parsed, new_data):
     Input('preview', 'n_clicks'),
     State('session-id', 'data'),
 )
-def cb_preview(clicked, session_id):
+def cb_process(clicked, session_id):
     """
     parse all inputs.
     if successful calculate result

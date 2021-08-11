@@ -15,15 +15,16 @@ def serve_layout():
     layout.session_id = session_id
 
     outlay = html.Div([
-        dcc.Store(id='session-id', data=session_id),
-        dcc.Store(id="new-data", data=False),
-        dcc.Store(id="func-selected", data=False),
-        dcc.Store(id='plot-column-preselect', data=None),
-        dcc.Store(id='func-field', data=None),
-        dcc.Store(id="params-parsed", data=False),
-        dcc.Store(id='default-field', data=None),
-        dcc.Store(id='new-default-field', data=None),
-        dcc.Store(id='ignore'),
+        dcc.Store(id='session-id', data=session_id),  # used to cache data
+        dcc.Store(id="new-data", data=False),  # new data/flags in cache
+        dcc.Store(id="new-upload", data=False),  # indicates data was uploaded
+        dcc.Store(id="data-update", data=False),  # function result changed data/flags
+        dcc.Store(id="func-selected", data=False),  # saqc-function in cache
+        dcc.Store(id='plot-column-preselect', data=None),  # first to show column
+        dcc.Store(id='func-field', data=None),  # data user put in input `field`
+        dcc.Store(id="params-parsed", data=False),  # indicate if all params are parsed successfully
+        dcc.Store(id='default-field', data=None),  # default value or suggestion for `field`
+        dcc.Store(id='ignore'),  # (debug) placeholder
         layout
     ])
     return outlay
