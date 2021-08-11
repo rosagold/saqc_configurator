@@ -24,14 +24,17 @@ import plotly.express as px
 import docstring_parser as docparse
 
 import saqc
+import dios
+from saqc import UNFLAGGED
+
 from helper import (
     parse_data, type_repr, parse_keywords, cache_get, cache_set,
-    saqc_func_repr, param_parse, param_typecheck
+    saqc_func_repr, param_parse, param_typecheck, aggregate
 )
-from const import AGG_METHODS, SAQC_FUNCS, TYPE_MAPPING, IGNORED_PARAMS, PARSER_MAPPING, \
-    AGG_THRESHOLD, MAX_DF_ROWS
+from const import (
+    AGG_METHODS, SAQC_FUNCS, TYPE_MAPPING, IGNORED_PARAMS, PARSER_MAPPING,
+    AGG_THRESHOLD, MAX_DF_ROWS )
 from app import app
-
 
 # ======================================================================
 # Input section
@@ -84,7 +87,7 @@ def cb_click_to_random(n, session_id, random_type):
                 df.iloc[i:i + size, j] = randint(2, 11) * 10 + np.random.rand(size)
 
     df = df.round(2)
-    flags = pd.DataFrame(False, index=df.index, columns=df.columns, dtype=bool)
+    flags = pd.DataFrame(UNFLAGGED, index=df.index, columns=df.columns, dtype=float)
     cache_set(session_id, 'df', df)
     cache_set(session_id, 'flags', flags)
     return 'random_data'
@@ -134,7 +137,7 @@ def cb_upload_data(filename, content, filetype, parser_kws, session_id):
         alert = dbc.Alert([html.B('Warning: '), msg], color='warning')
     print(alert)
 
-    flags = pd.DataFrame(False, index=df.index, columns=df.columns, dtype=bool)
+    flags = pd.DataFrame(UNFLAGGED, index=df.index, columns=df.columns, dtype=float)
     cache_set(session_id, 'df', df)
     cache_set(session_id, 'flags', flags)
     return True, False, alert  # new-upload, kws_invalid, alerts
@@ -143,9 +146,11 @@ def cb_upload_data(filename, content, filetype, parser_kws, session_id):
 @app.callback(
     Output('new-data', 'data'),
     Input('new-upload', 'data'),
+    Input('data-update', 'data'),
+    State('session-id', 'data')
 )
-def cb_new_data(upload):
-    return upload
+def cb_new_data(upload, update, session_id):
+    return cache_get(session_id, 'df', None) is not None
 
 
 # ======================================================================
@@ -222,25 +227,25 @@ def cb_fill_plot_column_select(_0, _1, func_field, default_field, session_id):
 @app.callback(
     Output('graph', 'figure'),
     Input('plot-column', 'value'),
+    Input('new-data', 'data'),
     State('session-id', 'data'),
 )
-def cb_plot_var(plotcol, session_id):
+def cb_plot_var(plotcol, new_data, session_id):
     if not plotcol:
         return dict(data=[], layout={}, frames=[])
-    df: pd.DataFrame = cache_get(session_id, 'df', None)
-    df = df[[plotcol]]
-
-    # aggregation for big data
-    # # df = df.reset_index()
-    # window = len(df.index) // AGG_THRESHOLD
-    # if window > 2:
-    #     if df.index.inferred_type.startswith('datetime'):
-    #         window = (df.index.max() - df.index.min()) / AGG_THRESHOLD
-    #     df = df.resample(window).agg('mean')
-
+    df = cache_get(session_id, 'df', None)
+    fl = cache_get(session_id, 'flags', None)
+    data = df[plotcol]
+    flags = fl[plotcol]
     indexname = df.index.name or 'index'
-    x, y = df.index, df[plotcol]
-    fig = px.line(x=x, y=y, labels=dict(x=indexname, y=plotcol))
+
+    # plot data
+    fig = px.line(x=data.index, y=data, labels=dict(x=indexname, y=plotcol))
+
+    # plot flags
+    flagged = flags > saqc.UNFLAGGED
+    y = data.loc[flagged]
+    fig.add_scatter(x=y.index, y=y, mode="markers")
     return fig
 
 
@@ -533,10 +538,9 @@ def cb_enable_preview(parsed, new_data):
 
 
 @app.callback(
+    Output("data-update", 'data'),
     Output('preview-alert', 'children'),
     Output('result', 'children'),
-    # Output('plot', 'children'),
-    Output('ignore', 'data'),
     Input('preview', 'n_clicks'),
     State('session-id', 'data'),
 )
@@ -550,38 +554,37 @@ def cb_process(clicked, session_id):
         raise PreventUpdate
 
     df = cache_get(session_id, 'df')
+    flags = cache_get(session_id, 'flags')
     func = cache_get(session_id, 'func')
     params = cache_get(session_id, 'params')
     field = params['field']
 
-    frpr = saqc_func_repr(func, params)
-    txt = f"call `qc.{frpr}`\n"
-
-    txt += '\ndetailed params:\n-----------------\n'
-    for k, v in params.items():
-        txt += f"{k}={repr(v)} ({type(v).__name__})\n"
+    frpr = f"`qc.{saqc_func_repr(func, params)}`"
 
     alert, plot = [], []
     try:
         qc = saqc.SaQC(df)
         func = getattr(qc, f"{func._module}.{func.__name__}")
-
-        # plot data
-        fig = px.line(df, x=df.index, y=field)
         result = func(**params)
+        flag_col = result.flags[field]
+        flags[field] = flag_col
 
-        # plot flags
-        flags = result.flags[field]
-        flagged = flags > saqc.UNFLAGGED
-        x = flags[flagged].index
-        y = df.loc[flagged, field]
-        fig.add_scatter(x=x, y=y, mode="markers", )
-
-        plot = dcc.Graph(figure=fig)
     except Exception as e:
         alert = dbc.Alert(repr(e), color='danger')
-        txt = 'Errors during ' + txt
+        txt = f'Errors during call of {frpr}\n'
     else:
-        txt = 'Great Success\n=============\n' + txt
+        flagged = flag_col > UNFLAGGED
+        n, N = len(flagged[flagged]), len(flagged)
+        txt = f'Great Success\n' \
+              f'=============\n' \
+              f'call of {frpr}\n' \
+              f'flagged: {n}/{N} data points ({round(n/N*100,2)}%)\n'
 
-    return alert, html.Pre(txt), plot
+    # detailed params
+    txt += '\nparsed parameter:' \
+           '\n-----------------\n'
+    for k, v in params.items():
+        txt += f"{k}={repr(v)} ({type(v).__name__})\n"
+
+    cache_set(session_id, 'flags', flags)
+    return True, alert, html.Pre(txt)

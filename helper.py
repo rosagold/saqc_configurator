@@ -5,7 +5,7 @@ import pandas as pd
 import io
 import dash_bootstrap_components as dbc
 import saqc.lib.types
-from const import TYPE_MAPPING
+from const import TYPE_MAPPING, AGG_THRESHOLD
 import typeguard
 
 
@@ -228,6 +228,22 @@ def param_typecheck(name, value, expected_type, df=None):
 
     return value
 
+
+def aggregate(df: pd.DataFrame, method='mean') -> pd.DataFrame :
+    # aggregation is currently disabled
+    # the current workaround is to limit the dataset
+    # to a number of rows, to prevent performance problems.
+    # see also: usage of MAX_DF_ROWS in constants.py
+    if True:
+        return df
+
+    ...
+
+    if len(df.index) // AGG_THRESHOLD > 2:
+        if df.index.inferred_type.startswith('datetime'):
+            window = (df.index.max() - df.index.min()) / AGG_THRESHOLD
+            df = df.resample(window).agg(method)
+    return df
 
 
 

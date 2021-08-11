@@ -52,8 +52,6 @@ data_section = html.Div(
         # ######################################################################
         dbc.Form(
             [
-                # Data        [Upload File]  [mean|v]
-                # kwargs      [_________]
                 dbc.FormGroup(
                     [
                         dbc.Label("Data", width=2),
@@ -121,7 +119,6 @@ config_section = html.Div(
 
         dbc.Form(
             [
-                # Config  [Upload File]
                 dbc.FormGroup(
                     [
                         dbc.Label("Config (optional)", width=2),
@@ -176,8 +173,6 @@ function_section = html.Div(
             ]
         ),
         html.Br(),
-        dbc.Card([]),
-        html.Br(),
         dbc.Card(
             [
                 dbc.CardHeader([], id="params-header"),  # filled by cb_params_header()
@@ -217,8 +212,6 @@ function_section = html.Div(
                 ),
             ]
         ),
-        html.Br(),
-        dbc.Card("Result", body=True, id="result"),  # filled by cb_process()
     ]
 )
 
@@ -278,6 +271,8 @@ config_card = dbc.Card(
     ]
 )
 
+result_card = dbc.Card("Result", body=True, id="result")  # filled by cb_process()
+
 # ######################################################################
 # Final layouts
 # ######################################################################
@@ -289,6 +284,7 @@ layout0 = dbc.Container([
     data_card,
     preview_card,
     function_card,
+    result_card,
     config_card,
     footer,
 ])
@@ -296,16 +292,18 @@ layout0 = dbc.Container([
 # row(col,col)
 # row(col,col)
 # ------.--------
-# data  | preview
-#       | preview
+# data  | config
+#       | config
 # ------|--------
-# func  | config
+# func  | preview
 # func  |
 # func  |
 # ------^--------
 layout1 = dbc.Container(
     [
+        html.Br(),
         title,
+        html.Br(),
         dbc.Row([
             dbc.Col([data_card], width=5),
             dbc.Col([config_card], width=7),
@@ -315,7 +313,7 @@ layout1 = dbc.Container(
 
         dbc.Row([
             dbc.Col([function_card], width=5),
-            dbc.Col([preview_card], width=7),
+            dbc.Col([preview_card, result_card], width=7),
         ]),
 
         footer,
@@ -334,14 +332,16 @@ layout1 = dbc.Container(
 # ------^--------
 layout2 = dbc.Container(
     [
+        html.Br(),
         title,
+        html.Br(),
         dbc.Row([
-            dbc.Col([data_card, function_card], width=5),
-            dbc.Col([config_card, preview_card], width=7),
+            dbc.Col([data_card, html.Br(), function_card, html.Br(), result_card], width=5),
+            dbc.Col([config_card, html.Br(), preview_card], width=7),
         ]),
         footer,
     ],
     fluid=True,
 )
 
-layout = layout1
+layout = layout2
