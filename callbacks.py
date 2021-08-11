@@ -159,13 +159,52 @@ def cb_df_preview(new_data, filename, session_id):
 # Plot
 # ======================================================================
 
-# @app.callback(
-#     Output('df-plot', 'children'),
-#     Input('new-data', 'data'),
-#     State('upload-data', 'filename'),
-#     State('session-id', 'data'),
-# )
-# def cb_df_preview(new_data, filename, session_id):
+@app.callback(
+    Output('plot-container', 'children'),
+    Input('new-data', 'data'),
+    State('default-field', 'data'),
+    State('session-id', 'data'),
+)
+def cb_plot(new_data, default_field, session_id):
+    if not new_data:
+        raise PreventUpdate
+    df = cache_get(session_id, 'df', None)
+    if df is None:
+        return []
+
+    preselect = default_field
+    if preselect is None:
+        preselect = df.columns[0]
+
+    col_chooser = dbc.FormGroup(
+        [
+            dbc.Label("Column to plot", width='auto'),
+            dbc.Col(
+                dbc.Select(
+                    options=[dict(label=c, value=c) for c in df.columns],
+                    value=preselect,
+                    id="plotcol-select",
+                ),
+                width="auto",
+            )
+        ], row=True, inline=True
+    )
+
+    fig = px.line(df, x=df.index, y=preselect)
+    graph = dcc.Graph(figure=fig, id='graph')
+    return [html.Br(), col_chooser, graph]
+
+
+@app.callback(
+    Output('graph', 'figure'),
+    Input('plotcol-select', 'value'),
+    State('session-id', 'data'),
+)
+def cb_plot_var(plotcol, session_id):
+    df = cache_get(session_id, 'df', None)
+    fig = px.line(df, x=df.index, y=plotcol)
+    return fig
+
 
 # ======================================================================
 # Function section and param validation
@@ -213,7 +252,7 @@ def _get_docstring_description(docstr):
     State('default-field', 'data'),
     State('session-id', 'data')
 )
-def cb_foo(new_data, func_field, default_field, session_id):
+def cb_set_default_field(new_data, func_field, default_field, session_id):
     ctx = dash.callback_context
     if not ctx.triggered:
         raise PreventUpdate
@@ -462,7 +501,8 @@ def cb_enable_preview(parsed, new_data):
 @app.callback(
     Output('preview-alert', 'children'),
     Output('result', 'children'),
-    Output('plot', 'children'),
+    # Output('plot', 'children'),
+    Output('ignore', 'data'),
     Input('preview', 'n_clicks'),
     State('session-id', 'data'),
 )

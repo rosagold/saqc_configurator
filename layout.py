@@ -102,9 +102,6 @@ data_section = html.Div(
     ]
 )
 
-tab_data = html.Div([], id="df-preview")  # filled by cb_df_preview()
-tab_plot = html.Div([], id='plot')  # filled by cb_df_preview())
-
 config_section = html.Div(
     [
 
@@ -226,8 +223,10 @@ preview_card = dbc.Card(
         dbc.CardBody(
             dbc.Tabs(
                 [
-                    dbc.Tab([], label="Data preview", id='df-preview'),
-                    dbc.Tab([], label="Plot", id='plot'),
+                    dbc.Tab([], label="Data", id='df-preview'),
+                    dbc.Tab([
+                        # fixme Div([])'s for plot column-chooser and agg-chooser ??
+                    ], label="Plot", id='plot-container'),
                 ],
                 active_tab='tab-0',
             )
@@ -237,7 +236,7 @@ preview_card = dbc.Card(
 
 function_card = dbc.Card(
     [
-        dbc.CardHeader("Functions"),
+        dbc.CardHeader("Function"),
         dbc.CardBody([function_section]),
     ]
 )

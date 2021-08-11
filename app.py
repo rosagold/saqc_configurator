@@ -18,10 +18,12 @@ def serve_layout():
         dcc.Store(id='session-id', data=session_id),
         dcc.Store(id="new-data", data=False),
         dcc.Store(id="func-selected", data=False),
+        dcc.Store(id='plot-column-preselect', data=None),
         dcc.Store(id='func-field', data=None),
         dcc.Store(id="params-parsed", data=False),
         dcc.Store(id='default-field', data=None),
         dcc.Store(id='new-default-field', data=None),
+        dcc.Store(id='ignore'),
         layout
     ])
     return outlay
@@ -31,7 +33,7 @@ app = dash.Dash(
     name=__name__,
     external_stylesheets=[dbc.themes.BOOTSTRAP],
     url_base_pathname=os.getenv("APP_URL", None),
-    suppress_callback_exceptions=False,
+    suppress_callback_exceptions=True,
 )
 app.layout = serve_layout
 
