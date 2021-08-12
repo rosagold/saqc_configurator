@@ -12,7 +12,7 @@ import plotly.express as px
 
 from helper import FormGroupInput, DivRow
 from const import AGG_METHODS, SAQC_FUNCS, PARSER_MAPPING, RANDOM_TYPES, MAX_FILE_SIZE, \
-    MEGA, PARSER_KW_DEFAULTS
+    MEGA, PARSER_KW_DEFAULTS, MAX_DF_ROWS
 
 data_section = html.Div(
     [
@@ -62,10 +62,6 @@ data_section = html.Div(
                                     max_size=MAX_FILE_SIZE,
                                     id="upload-data",
                                 ),
-                                dbc.FormText(
-                                    f"Maximum upload file size: {MAX_FILE_SIZE//MEGA}M",
-                                    color="secondary",
-                                ),
                             ],
                             width="auto",
                         ),
@@ -81,6 +77,14 @@ data_section = html.Div(
                             ],
                             width="auto",
                         ),
+                        dbc.Col([
+                            dbc.FormText([
+                                f"Maximum upload file size: {MAX_FILE_SIZE // MEGA}M",
+                                html.Br(),
+                                f"Maximum rows per column: {MAX_DF_ROWS}"
+                                ],
+                                color="secondary",
+                        )], width='auto'),
                     ],
                     row=True,
                     inline=True,
@@ -336,8 +340,8 @@ layout2 = dbc.Container(
         title,
         html.Br(),
         dbc.Row([
-            dbc.Col([data_card, html.Br(), function_card, html.Br(), result_card], width=5),
-            dbc.Col([config_card, html.Br(), preview_card], width=7),
+            dbc.Col([data_card, html.Br(), function_card], width=5),
+            dbc.Col([config_card, html.Br(), preview_card, html.Br(), result_card], width=7),
         ]),
         footer,
     ],

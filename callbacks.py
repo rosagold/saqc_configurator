@@ -33,20 +33,39 @@ from helper import (
 )
 from const import (
     AGG_METHODS, SAQC_FUNCS, TYPE_MAPPING, IGNORED_PARAMS, PARSER_MAPPING,
-    AGG_THRESHOLD, MAX_DF_ROWS )
+    AGG_THRESHOLD, MAX_DF_ROWS)
 from app import app
+
+send_signal = True
+send_no_signal = dash.no_update
+
+
+def _on_change(new, old):
+    if new == old:
+        return dash.no_update
+    return new
+
+
+def _get_trigger():
+    ctx = dash.callback_context
+    if not ctx.triggered:
+        return None
+    return ctx.triggered[0]['prop_id'].split('.')[0]
+
 
 # ======================================================================
 # Input section
 # ======================================================================
 
 @app.callback(
-    Output('upload-data', 'filename'),
-    Input('random-data', 'n_clicks'),
+    Output('new-random-signal', 'data'),
+    Output('upload-data', 'filename'),  # reset data upload
+    Input('random-data', 'n_clicks'),  # trigger only
     State('session-id', 'data'),
-    State('random-type', 'value')
+    State('random-type', 'value'),
+    prevent_initial_call=True,
 )
-def cb_click_to_random(n, session_id, random_type):
+def cb_click_to_random(_, session_id, random_type):
     """
     Generate random data.
 
@@ -55,9 +74,6 @@ def cb_click_to_random(n, session_id, random_type):
     callback.
     """
     random_type = random_type or []
-    if n is None:
-        raise PreventUpdate
-
     rows, cols = 990, 10
     points = rows * cols
     r = np.random.rand(points) * 10
@@ -90,11 +106,11 @@ def cb_click_to_random(n, session_id, random_type):
     flags = pd.DataFrame(UNFLAGGED, index=df.index, columns=df.columns, dtype=float)
     cache_set(session_id, 'df', df)
     cache_set(session_id, 'flags', flags)
-    return 'random_data'
+    return send_signal, None
 
 
 @app.callback(
-    Output('new-upload', 'data'),
+    Output('new-upload-signal', 'data'),
     Output('parser-kwargs', 'invalid'),
     Output('upload-alert', 'children'),
     Input('upload-data', 'filename'),
@@ -102,21 +118,21 @@ def cb_click_to_random(n, session_id, random_type):
     Input('datafile-type', 'value'),
     Input('parser-kwargs', 'value'),
     State('session-id', 'data'),
+    prevent_initial_call=True,
 )
 def cb_upload_data(filename, content, filetype, parser_kws, session_id):
-    if filename is None:
-        raise PreventUpdate
+    kws_valid, kws_invalid = False, True
+    no_alert = []
 
-    if filename == 'random_data':
-        # new-upload, kws_invalid, alerts
-        return True, False, []
-
+    # parse keywords
     try:
         parser_kws = parse_keywords(parser_kws)
     except SyntaxError:
         msg = "Keyword parsing error: Syntax: 'key1=..., key3=..., key3=...'"
-        # new-upload, kws_invalid, alerts
-        return False, True, dbc.Alert(msg, color='danger')
+        return send_no_signal, kws_invalid, dbc.Alert(msg, color='danger')
+
+    if filename is None or content is None:
+        return send_no_signal, kws_valid, no_alert
 
     content_type, content_string = content.split(',')
     decoded = base64.b64decode(content_string)
@@ -126,8 +142,7 @@ def cb_upload_data(filename, content, filetype, parser_kws, session_id):
             raise ValueError("DataFrame must not be empty.")
     except Exception as e:
         msg = f"Data parsing error: {repr(e)}"
-        # new-upload, kws_invalid, alerts
-        return False, False, dbc.Alert(msg, color='danger')
+        return send_no_signal, kws_valid, dbc.Alert(msg, color='danger')
 
     alert = []
     if len(df.index) > MAX_DF_ROWS:
@@ -135,22 +150,29 @@ def cb_upload_data(filename, content, filetype, parser_kws, session_id):
         msg = f'Maximum data set size exceeded. ' \
               f'The data is truncated to {MAX_DF_ROWS} rows per column'
         alert = dbc.Alert([html.B('Warning: '), msg], color='warning')
-    print(alert)
 
     flags = pd.DataFrame(UNFLAGGED, index=df.index, columns=df.columns, dtype=float)
     cache_set(session_id, 'df', df)
     cache_set(session_id, 'flags', flags)
-    return True, False, alert  # new-upload, kws_invalid, alerts
+    return send_signal, kws_valid, alert
 
 
 @app.callback(
-    Output('new-data', 'data'),
-    Input('new-upload', 'data'),
-    Input('data-update', 'data'),
-    State('session-id', 'data')
+    Output('data-src-and-signal', 'data'),
+    Input('new-random-signal', 'data'),  # just trigger
+    Input('new-upload-signal', 'data'),  # just trigger
+    Input('data-update-signal', 'data'),  # just trigger
+    prevent_initial_call=True,
 )
-def cb_new_data(upload, update, session_id):
-    return cache_get(session_id, 'df', None) is not None
+def cb_new_data(*_):
+    trigger = _get_trigger()
+    if trigger == 'new-random-signal':
+        return 'random'
+    if trigger == 'new-upload-signal':
+        return 'upload'
+    if trigger == 'data-update-signal':
+        return 'update'
+    raise RuntimeError('unknown trigger in `cb_new_data`')
 
 
 # ======================================================================
@@ -159,13 +181,17 @@ def cb_new_data(upload, update, session_id):
 
 @app.callback(
     Output('data-table', 'children'),
-    Input('new-data', 'data'),
+    Input('data-src-and-signal', 'data'),
     State('upload-data', 'filename'),
     State('session-id', 'data'),
+    prevent_initial_call=True,
 )
-def cb_data_table(new_data, filename, session_id):
-    if not new_data or filename is None:
+def cb_data_table(data_src, filename, session_id):
+    if not data_src:
         raise PreventUpdate
+
+    if data_src == 'random':
+        filename = 'random_data'
 
     df = cache_get(session_id, 'df')
     df = df.reset_index()  # otherwise the index will not show up
@@ -196,52 +222,65 @@ def cb_data_table(new_data, filename, session_id):
 
 @app.callback(
     Output('plot-column', 'options'),
-    Output('plot-column', 'value'),
-    Input('new-data', 'data'),
-    Input('preview', 'n_clicks'),  # trigger a recheck of `preselect` on `Preview` click
-    State('func-field', 'data'),
-    State('default-field', 'data'),
+    Input('data-src-and-signal', 'data'),
     State('session-id', 'data'),
+    prevent_initial_call=True
 )
-def cb_fill_plot_column_select(_0, _1, func_field, default_field, session_id):
+def cb_new_plotcol_selector(data_src, session_id):
+    """ make a new selector if we have new data """
+    if data_src is None:
+        raise PreventUpdate
     df = cache_get(session_id, 'df', None)
-    if df is None:
-        return None, None
+    return [dict(label=c, value=c) for c in df.columns]
 
-    if func_field is not None and func_field in df.columns:
-        preselect = func_field
-    elif default_field is not None and default_field in df.columns:
-        preselect = default_field
-    else:
-        preselect = df.columns[0]
 
-    options = [dict(label=c, value=c) for c in df.columns]
-    value = preselect
-    return options, value
-
-    # fig = px.line(df, x=df.index, y=preselect)
-    # graph = dcc.Graph(figure=fig, id='graph')
-    # return [html.Br(), col_chooser, graph]
+@app.callback(
+    Output('plot-column', 'value'),
+    Input('preview', 'n_clicks'),  # trigger only
+    Input('data-src-and-signal', 'data'),  # trigger only
+    State('func-field', 'data'),
+    State('plot-column', 'value'),
+    State('session-id', 'data'),
+    prevent_initial_call=True
+)
+def cb_plotcol_selector_value(_0, data_src, func_field, curr_val, session_id):
+    if data_src is None:
+        raise PreventUpdate
+    df = cache_get(session_id, 'df', None)
+    trigger = _get_trigger()
+    if trigger is None or df is None:
+        raise PreventUpdate
+    if trigger == 'preview' and func_field in df.columns:
+        return func_field
+    if curr_val is None or curr_val not in df.columns:
+        return df.columns[0]
+    raise PreventUpdate
 
 
 @app.callback(
     Output('graph', 'figure'),
     Input('plot-column', 'value'),
-    Input('new-data', 'data'),
+    Input('data-src-and-signal', 'data'),  # trigger only
     State('session-id', 'data'),
+    prevent_initial_call=True
 )
-def cb_plot_var(plotcol, new_data, session_id):
-    if not plotcol:
-        return dict(data=[], layout={}, frames=[])
-    df = cache_get(session_id, 'df', None)
-    fl = cache_get(session_id, 'flags', None)
+def cb_plot_var(plotcol, data_src, session_id):
+    if plotcol is None or data_src is None:
+        raise PreventUpdate
+    # now data must exist
+
+    df = cache_get(session_id, 'df')
+    fl = cache_get(session_id, 'flags')
+
+    if plotcol not in df.columns:
+        raise PreventUpdate
+
     data = df[plotcol]
     flags = fl[plotcol]
     indexname = df.index.name or 'index'
 
     # plot data
     fig = px.line(x=data.index, y=data, labels=dict(x=indexname, y=plotcol))
-
     # plot flags
     flagged = flags > saqc.UNFLAGGED
     y = data.loc[flagged]
@@ -254,17 +293,18 @@ def cb_plot_var(plotcol, new_data, session_id):
 # ======================================================================
 
 @app.callback(
-    Output('func-selected', 'data'),
+    Output('func-selected-signal', 'data'),
     Output('params-header', 'children'),
     Input('function-select', 'value'),
     State('session-id', 'data'),
+    prevent_initial_call=True
 )
 def cb_params_header(funcname, session_id):
     if funcname is None:
         raise PreventUpdate
     func = SAQC_FUNCS[funcname]
     cache_set(session_id, 'func', func)
-    return True, html.H4(funcname)
+    return send_signal, html.H4(funcname)
 
 
 def _get_docstring_description(docstr):
@@ -281,15 +321,16 @@ def _get_docstring_description(docstr):
 
 @app.callback(
     Output('default-field', 'data'),
-    Input('new-data', 'data'),
+    Input('data-src-and-signal', 'data'),  # just a trigger
     Input('func-field', 'data'),  # the `field` param of the selected function
     State('default-field', 'data'),
-    State('session-id', 'data')
+    State('session-id', 'data'),
+    prevent_initial_call=True
 )
-def cb_maybe_update_default_field(_0, func_field, default_field, session_id):
+def cb_maybe_update_default_field(_0, func_field, curr_value, session_id):
     """
-    - update the default if the user entered a new valid value
-    - keep the old value otherwise
+    - we update the default-field if the user enter a new valid value
+    - otherwise we keep its value
     - initially suggest a df-column
     """
 
@@ -297,11 +338,14 @@ def cb_maybe_update_default_field(_0, func_field, default_field, session_id):
     if not ctx.triggered:
         raise PreventUpdate
 
-    # once the user set a valid field we keep it forever
+    # once the user set a valid field we update the default
     if func_field is not None:
+        if func_field == curr_value:
+            raise PreventUpdate
         return func_field
 
-    # now func_field is None !
+    # now `func_field` is None, this means
+    # its not present at all or not valid.
 
     df = cache_get(session_id, 'df', None)
     if df is None or df.columns.empty:
@@ -309,18 +353,19 @@ def cb_maybe_update_default_field(_0, func_field, default_field, session_id):
     else:
         columns = df.columns
 
-    # check if our possibly suggested default is still valid
-    if default_field in columns:
-        return default_field
+    # is the current value still valid ?
+    if curr_value in columns:
+        raise PreventUpdate
 
     return str(columns[0])  # suggest a default
 
 
 @app.callback(
     Output('params-body', 'children'),
-    Input('func-selected', 'data'),
+    Input('func-selected-signal', 'data'),
     State('default-field', 'data'),
-    State('session-id', 'data')
+    State('session-id', 'data'),
+    prevent_initial_call=True
 )
 def cb_params_body(func_selected, default_field, session_id):
     """
@@ -365,11 +410,11 @@ def cb_params_body(func_selected, default_field, session_id):
 
         # using a dict as `id` makes pattern matching callbacks possible
         id = {"group": "param", "id": name}
-        id_valid = {"group": "param-validation", "id": name}
+        id_valid = {"group": "param-alert", "id": name}
 
         # html creation
         name = html.B(name)
-        inp = dbc.Input(type='text', value=default, debounce=True, id=id)
+        inp = dbc.Input(type='text', value=default, debounce=False, id=id)
         hint = dbc.FormText(hint, color='secondary')
         form = dbc.FormGroup([
             dbc.Label(name, html_for=id, width=2),
@@ -387,13 +432,18 @@ def cb_params_body(func_selected, default_field, session_id):
 
 @app.callback(
     Output({'group': 'param', 'id': MATCH}, 'invalid'),
-    Output({'group': 'param-validation', 'id': MATCH}, 'children'),
-    Input('new-data', 'data'),  # trigger a re-check on new data
+    Output({'group': 'param-alert', 'id': MATCH}, 'children'),
+    Input('data-src-and-signal', 'data'),  # trigger a re-check on new data
     Input({'group': 'param', 'id': MATCH}, 'value'),
     State({'group': 'param', 'id': MATCH}, 'id'),
-    State('session-id', 'data')
+    State('session-id', 'data'),
+
+    # initial here means: when the element inserted in the layout,
+    # which happens dynamically in `cb_params_body` and we do want
+    # to check the (default) values
+    prevent_initial_call=False,
 )
-def cb_param_validation(new_data, value, param_id, session_id):
+def cb_param_validation(_0, value, param_id, session_id):
     """
     validated param input and show an alert if validation fails
     """
@@ -436,19 +486,20 @@ def cb_param_validation(new_data, value, param_id, session_id):
 
 
 @app.callback(
-    Output('params-parsed', 'data'),
+    Output('params-parsed-and-signal', 'data'),
     Output('func-field', 'data'),
+    Input({'group': 'param', 'id': ALL}, 'value'),
     Input({'group': 'param', 'id': ALL}, 'invalid'),
-    State({'group': 'param', 'id': ALL}, 'value'),
     State({'group': 'param', 'id': ALL}, 'id'),
-    State('func-selected', 'data'),
+    State('func-selected-signal', 'data'),
+    State('params-parsed-and-signal', 'data'),
     State('session-id', 'data'),
 )
 def cb_parsing_done(
-        invalids, values, param_ids, func_selected, session_id
+        values, invalids, param_ids, func_selected, curr_value, session_id
 ):
-    if not func_selected:
-        raise PreventUpdate
+    if not func_selected or None in invalids:
+        return _on_change(False, curr_value), None
 
     # if the user enters a value for `field`, which is always present (!)
     # we update the default field, unless the value is not valid, then we
@@ -461,7 +512,7 @@ def cb_parsing_done(
         func_field = values[i][1:-1]
 
     if any(invalids):
-        return False, func_field
+        return _on_change(False, curr_value), func_field
 
     # store params in cache
     params = dict()
@@ -476,51 +527,7 @@ def cb_parsing_done(
         params[name] = param_parse(value)
     cache_set(session_id, 'params', params)
 
-    return True, func_field
-
-
-# ======================================================================
-# Config
-# ======================================================================
-
-
-@app.callback(
-    Output('add-to-config', 'disabled'),
-    Input('params-parsed', 'data'),
-)
-def cb_enable_add_to_config(parsed):
-    """ enable add-button if all param-inputs are valid. """
-    return not parsed
-
-
-@app.callback(
-    Output('config-preview', 'value'),
-    Input('add-to-config', 'n_clicks'),  # trigger by `add`
-    Input('clear-config', 'n_clicks'),  # trigger by `clear`
-    Input('upload-config', 'contents'),
-    State('config-preview', 'value'),
-    State('session-id', 'data'),
-)
-def cb_config_preview(add, clear, content, config, session_id):
-    if config is None:
-        config = ''
-    ctx = dash.callback_context
-    if not ctx.triggered:
-        raise PreventUpdate
-    trigger = ctx.triggered[0]['prop_id'].split('.')[0]
-
-    if trigger == 'add-to-config':
-        func = cache_get(session_id, 'func')
-        params = cache_get(session_id, 'params')
-        line = "qc." + saqc_func_repr(func, params)
-        return config + line + '\n'
-
-    if trigger == 'clear-config':
-        return ''
-
-    content_type, content_string = content.split(',')
-    decoded = base64.b64decode(content_string)
-    return decoded.decode('utf-8')
+    return _on_change(True, curr_value), func_field
 
 
 # ======================================================================
@@ -529,20 +536,21 @@ def cb_config_preview(add, clear, content, config, session_id):
 
 @app.callback(
     Output('preview', 'disabled'),
-    Input('params-parsed', 'data'),
-    Input('new-data', 'data'),
+    Input('params-parsed-and-signal', 'data'),
+    Input('data-src-and-signal', 'data'),
 )
-def cb_enable_preview(parsed, new_data):
+def cb_enable_preview(parsed, data_exist):
     """ enable preview-button if we have data and all param-inputs are valid. """
-    return not parsed or not new_data
+    return not (parsed and data_exist)
 
 
 @app.callback(
-    Output("data-update", 'data'),
+    Output("data-update-signal", 'data'),
     Output('preview-alert', 'children'),
     Output('result', 'children'),
     Input('preview', 'n_clicks'),
     State('session-id', 'data'),
+    prevent_initial_call=True,
 )
 def cb_process(clicked, session_id):
     """
@@ -550,9 +558,6 @@ def cb_process(clicked, session_id):
     if successful calculate result
     on parsing errors show an alert.
     """
-    if not clicked:
-        raise PreventUpdate
-
     df = cache_get(session_id, 'df')
     flags = cache_get(session_id, 'flags')
     func = cache_get(session_id, 'func')
@@ -578,7 +583,7 @@ def cb_process(clicked, session_id):
         txt = f'Great Success\n' \
               f'=============\n' \
               f'call of {frpr}\n' \
-              f'flagged: {n}/{N} data points ({round(n/N*100,2)}%)\n'
+              f'flagged: {n}/{N} data points ({round(n / N * 100, 2)}%)\n'
 
     # detailed params
     txt += '\nparsed parameter:' \
@@ -587,4 +592,48 @@ def cb_process(clicked, session_id):
         txt += f"{k}={repr(v)} ({type(v).__name__})\n"
 
     cache_set(session_id, 'flags', flags)
-    return True, alert, html.Pre(txt)
+    return send_signal, alert, html.Pre(txt)
+
+
+# ======================================================================
+# Config
+# ======================================================================
+
+
+@app.callback(
+    Output('add-to-config', 'disabled'),
+    Input('params-parsed-and-signal', 'data'),
+)
+def cb_enable_add_to_config(parsed):
+    """ enable add-button if all param-inputs are valid. """
+    return not parsed
+
+
+@app.callback(
+    Output('config-preview', 'value'),
+    Input('add-to-config', 'n_clicks'),  # trigger by `add`
+    Input('clear-config', 'n_clicks'),  # trigger by `clear`
+    Input('upload-config', 'contents'),
+    State('config-preview', 'value'),
+    State('session-id', 'data'),
+)
+def cb_config_preview(add, clear, content, config, session_id):
+    trigger = _get_trigger()
+    if trigger is None:
+        raise PreventUpdate
+
+    if config is None:
+        config = ''
+
+    if trigger == 'add-to-config':
+        func = cache_get(session_id, 'func')
+        params = cache_get(session_id, 'params')
+        line = "qc." + saqc_func_repr(func, params)
+        return config + line + '\n'
+
+    if trigger == 'clear-config':
+        return ''
+
+    content_type, content_string = content.split(',')
+    decoded = base64.b64decode(content_string)
+    return decoded.decode('utf-8')
