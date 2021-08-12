@@ -57,13 +57,13 @@ The app is written in **python** mainly with the **Dash** package.
 It uses the Webframework **Flask** to create a **WSGI**-app, wich then can communicate 
 with WSGI-compatible servers. 
 
-On client (Browser) side it uses **Bootstrap** components. On the server side, 
-python functions handle the so-called *callbacks*. For communication between the 
-callbacks itself, a (Flask-)Filesystem-Cache is used, to store data, that is primary 
+On client (Browser) side it uses **Bootstrap** to style the used Dash widgets and components.
+On the server side, python functions handle the so-called Dash-*callbacks*. For communication
+between the callbacks itself, a (Flask-)Filesystem-Cache is used, to store data, that is primary 
 used for calculations on server-side.
 
-If the app is run directly via `python wsgi.py` a Flask-server is started in local mode,
-which is used for testing/debugging only.
+If the app is run directly via `python wsgi.py` a Flask development server is started,
+which can be used for testing/debugging only.
 To deploy the app a **docker** container is provided. It set up the app and a 
 **gunicorn** server, which communicate with the app via **WSGI** and talk **http** to 
 the outside world.
